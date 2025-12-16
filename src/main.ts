@@ -9,6 +9,7 @@ import {
   splitCommand,
   newContext,
   findHighestImgId,
+  resolvePendingImages,
 } from './processTemplate';
 import {
   UserOptions,
@@ -166,6 +167,7 @@ async function createReport(
     indentXml: options.indentXml ?? true,
     preserveSpace: options.preserveSpace ?? true,
     compressionLevel: options.compressionLevel ?? 1,
+    imageConcurrency: options.imageConcurrency ?? 10,
   };
   const xmlOptions = {
     literalXmlDelimiter,
@@ -216,6 +218,11 @@ async function createReport(
   if (result.status === 'errors') {
     throw result.errors;
   }
+
+  // Resolve all pending image downloads in parallel with concurrency control
+  logger.debug('Resolving pending image downloads...');
+  await resolvePendingImages(ctx, createOptions.imageConcurrency);
+
   const {
     report: report1,
     images: images1,
@@ -244,6 +251,10 @@ async function createReport(
     if (result.status === 'errors') {
       throw result.errors;
     }
+
+    // Resolve pending images for this secondary XML
+    await resolvePendingImages(ctx, createOptions.imageConcurrency);
+
     const {
       report: report2,
       images: images2,
@@ -351,6 +362,7 @@ export async function listCommands(
     indentXml: true,
     preserveSpace: true,
     compressionLevel: 1,
+    imageConcurrency: 10,
   };
 
   const { jsTemplate, mainDocument, zip } = await parseTemplate(template);

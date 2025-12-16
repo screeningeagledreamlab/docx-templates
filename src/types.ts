@@ -145,6 +145,12 @@ export type UserOptions = {
    * (Default: 1)
    */
   compressionLevel?: number;
+  /**
+   * Maximum number of concurrent image downloads.
+   * Useful for controlling resource usage when processing templates with many images.
+   * (Default: 10)
+   */
+  imageConcurrency?: number;
 };
 
 export type CreateReportOptions = {
@@ -163,6 +169,7 @@ export type CreateReportOptions = {
   indentXml: boolean;
   preserveSpace: boolean;
   compressionLevel: number;
+  imageConcurrency: number;
 };
 
 export type SandBox = {
@@ -204,6 +211,27 @@ export type Context = {
   // To verfiy we don't have a nested if within the same p or tr tag
   pIfCheckMap: Map<Node, string>;
   trIfCheckMap: Map<Node, string>;
+
+  // For parallel image downloads
+  pendingImageDownloads: PendingImageDownload[];
+};
+
+// Represents a pending image download that will be resolved later
+export type PendingImageDownload = {
+  id: string; // The image relId (e.g., 'img1')
+  // Function that starts the download - called with concurrency control
+  fetchImage: () => Promise<ImagePars | undefined>;
+  cmd: string; // Original command for error reporting
+  // References to XML nodes that need dimension updates after resolution
+  extentNode?: NonTextNode; // wp:extent node
+  picExtNode?: NonTextNode; // a:ext node inside pic:spPr
+  xfrmNode?: NonTextNode; // a:xfrm node for rotation
+  blipNode?: NonTextNode; // a:blip node for SVG handling
+  extLstNode?: NonTextNode; // a:extLst node for SVG extension
+  docPrNode?: NonTextNode; // wp:docPr node for alt text
+  cNvPrNode?: NonTextNode; // pic:cNvPr node for alt text
+  drawingNode?: NonTextNode; // w:drawing node for caption handling
+  captionParent?: Node; // Parent node where caption should be added
 };
 
 export type Images = { [id: string]: Image };
