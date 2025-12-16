@@ -33,13 +33,15 @@
     "testDev": "NODE_ENV=development jest --coverage && mv .nyc_output/coverage-final.json .nyc_tmp/coverage-dev.json && rm -rf .nyc_output",
     "testCovReport": "cp -r .nyc_tmp .nyc_output && nyc report --reporter=html --reporter=lcov --reporter=text",
     "lint": "eslint \"src/**/*.{js,jsx,ts,tsx}\"",
-    "lint-fix": "eslint --fix \"src/**/*.{js,jsx,ts,tsx}\""
+    "lint-fix": "eslint --fix \"src/**/*.{js,jsx,ts,tsx}\"",
+    "test:stress": "jest --testPathPattern=stress-images.test.ts --testTimeout=300000"
   },
   "engines": {
     "node": ">=6"
   },
   "dependencies": {
     "jszip": "^3.10.1",
+    "p-limit": "3",
     "sax": "1.3.0"
   },
   "devDependencies": {
