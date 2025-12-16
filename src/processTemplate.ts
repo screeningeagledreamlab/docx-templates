@@ -23,6 +23,7 @@ import {
   BUILT_IN_COMMANDS,
   ImageExtensions,
   NonTextNode,
+  PendingImageDownload,
 } from './types';
 import {
   isError,
@@ -35,6 +36,10 @@ import {
   UnterminatedForLoopError,
 } from './errors';
 import { logger } from './debug';
+import pLimit from 'p-limit';
+
+// Default concurrency limit for parallel image downloads
+const DEFAULT_IMAGE_CONCURRENCY = 10;
 
 export function newContext(
   options: CreateReportOptions,
@@ -66,6 +71,7 @@ export function newContext(
     // To verfiy we don't have a nested if within the same p or tr tag
     pIfCheckMap: new Map(),
     trIfCheckMap: new Map(),
+    pendingImageDownloads: [],
   };
 }
 
@@ -359,6 +365,14 @@ export async function walkTemplate(
             parent._children.push(...captionNodes);
           }
 
+          // For parallel image downloads, store the parent reference
+          // so we can add captions after image resolution
+          const lastPending =
+            ctx.pendingImageDownloads[ctx.pendingImageDownloads.length - 1];
+          if (lastPending && lastPending.drawingNode === imgNode) {
+            lastPending.captionParent = parent;
+          }
+
           // Prevent containing paragraph or table row from being removed
           ctx.buffers['w:p'].fInsertedText = true;
           ctx.buffers['w:tr'].fInsertedText = true;
@@ -566,7 +580,7 @@ const processText = async (
     .split(cmdDelimiter[0])
     .map(s => s.split(cmdDelimiter[1]))
     .reduce((x, y) => x.concat(y));
-  let outText = '';
+  const outParts: string[] = [];
   const errors: Error[] = [];
   for (let idx = 0; idx < segments.length; idx++) {
     // Include the separators in the `buffers` field (used for deleting paragraphs if appropriate)
@@ -577,7 +591,7 @@ const processText = async (
     const segment = segments[idx];
     // logger.debug(`Token: '${segment}' (${ctx.fCmd})`);
     if (ctx.fCmd) ctx.cmd += segment;
-    else if (!isLoopExploring(ctx)) outText += segment;
+    else if (!isLoopExploring(ctx)) outParts.push(segment);
     appendTextToTagBuffers(segment, ctx, { fCmd: ctx.fCmd });
 
     // If there are more segments, execute the command (if we are in "command mode"),
@@ -587,7 +601,7 @@ const processText = async (
         const cmdResultText = await onCommand(data, node, ctx);
         if (cmdResultText != null) {
           if (typeof cmdResultText === 'string') {
-            outText += cmdResultText;
+            outParts.push(cmdResultText);
             appendTextToTagBuffers(cmdResultText, ctx, {
               fCmd: false,
               fInsertedText: true,
@@ -602,7 +616,7 @@ const processText = async (
     }
   }
   if (errors.length > 0) return errors;
-  return outText;
+  return outParts.join('');
 };
 
 // ==========================================
@@ -695,17 +709,63 @@ const processCmd: CommandProcessor = async (
       // IMAGE <code>
     } else if (cmdName === 'IMAGE') {
       if (!isLoopExploring(ctx)) {
-        const img: ImagePars | undefined = await runUserJsAndGetRaw(
-          data,
-          cmdRest,
-          ctx
-        );
-        if (img != null) {
-          try {
-            processImage(ctx, img);
-          } catch (e) {
-            if (!isError(e)) throw e;
-            throw new ImageError(e, cmd);
+        // Check if parallel image processing is enabled
+        if (ctx.options.imageConcurrency != null) {
+          // PARALLEL MODE: Defer image fetching until all commands are processed
+          // Pre-assign image ID so XML structure can be built now
+          ctx.imageAndShapeIdIncrement += 1;
+          const id = String(ctx.imageAndShapeIdIncrement);
+          const relId = `img${id}`;
+
+          // Build placeholder XML structure with node references for later updates
+          const pendingDownload = buildPendingImageNode(ctx, relId, id, cmd);
+
+          // MEMORY OPTIMIZATION: We capture loop state but NOT the data object.
+          // - `data` is immutable during template processing, so we reference it directly
+          // - `ctx.vars` contains loop variables that change per iteration, so we snapshot them
+          // - Only clone vars when inside a loop (ctx.loops.length > 0) to avoid unnecessary allocations
+          const isInsideLoop = ctx.loops.length > 0;
+          const capturedVars = isInsideLoop ? { ...ctx.vars } : null;
+          const capturedIdx = isInsideLoop ? getCurLoop(ctx)?.idx : undefined;
+
+          pendingDownload.fetchImage = () => {
+            // If we captured loop state, temporarily restore it for this evaluation
+            if (capturedVars !== null) {
+              const savedVars = ctx.vars;
+              const savedLoop = getCurLoop(ctx);
+              const savedIdx = savedLoop?.idx;
+              ctx.vars = capturedVars;
+              if (savedLoop && capturedIdx !== undefined)
+                savedLoop.idx = capturedIdx;
+              try {
+                return runUserJsAndGetRaw(data, cmdRest, ctx);
+              } finally {
+                // Restore original vars
+                ctx.vars = savedVars;
+                if (savedLoop && savedIdx !== undefined)
+                  savedLoop.idx = savedIdx;
+              }
+            }
+            // Not inside a loop - execute directly without state swapping
+            return runUserJsAndGetRaw(data, cmdRest, ctx);
+          };
+
+          // Store the pending download for later resolution
+          ctx.pendingImageDownloads.push(pendingDownload);
+        } else {
+          // INLINE MODE (default): Process image immediately during template walking
+          const img: ImagePars | undefined = await runUserJsAndGetRaw(
+            data,
+            cmdRest,
+            ctx
+          );
+          if (img != null) {
+            try {
+              processImage(ctx, img);
+            } catch (e) {
+              if (!isError(e)) throw e;
+              throw new ImageError(e, cmd);
+            }
           }
         }
       }
@@ -997,13 +1057,311 @@ function validateImagePars(pars: ImagePars) {
   if (pars.thumbnail) validateImage(pars.thumbnail);
 }
 
-const processImage = (ctx: Context, imagePars: ImagePars) => {
+// Build placeholder XML structure for an image, returning references for later updates
+const buildPendingImageNode = (
+  ctx: Context,
+  relId: string,
+  id: string,
+  cmd: string
+): PendingImageDownload => {
+  const node = newNonTextNode;
+
+  // Create nodes with placeholder values - will be updated after download resolves
+  const extentNode = node('wp:extent', { cx: '0', cy: '0' });
+  const picExtNode = node('a:ext', { cx: '0', cy: '0' });
+  const xfrmNode = node('a:xfrm', {}, [
+    node('a:off', { x: '0', y: '0' }),
+    picExtNode,
+  ]);
+  const docPrNode = node('wp:docPr', { id, name: `Picture ${id}`, descr: '' });
+  const cNvPrNode = node('pic:cNvPr', {
+    id: '0',
+    name: `Picture ${id}`,
+    descr: '',
+  });
+
+  const extLstNode = node('a:extLst', {}, [
+    node('a:ext', { uri: '{28A0092B-C50C-407E-A947-70E740481C1C}' }, [
+      node('a14:useLocalDpi', {
+        'xmlns:a14': 'http://schemas.microsoft.com/office/drawing/2010/main',
+        val: '0',
+      }),
+    ]),
+  ]);
+
+  const blipNode = node('a:blip', { 'r:embed': relId, cstate: 'print' }, [
+    extLstNode,
+  ]);
+
+  const pic = node(
+    'pic:pic',
+    { 'xmlns:pic': 'http://schemas.openxmlformats.org/drawingml/2006/picture' },
+    [
+      node('pic:nvPicPr', {}, [
+        cNvPrNode,
+        node('pic:cNvPicPr', {}, [
+          node('a:picLocks', { noChangeAspect: '1', noChangeArrowheads: '1' }),
+        ]),
+      ]),
+      node('pic:blipFill', {}, [
+        blipNode,
+        node('a:srcRect'),
+        node('a:stretch', {}, [node('a:fillRect')]),
+      ]),
+      node('pic:spPr', { bwMode: 'auto' }, [
+        xfrmNode,
+        node('a:prstGeom', { prst: 'rect' }, [node('a:avLst')]),
+        node('a:noFill'),
+        node('a:ln', {}, [node('a:noFill')]),
+      ]),
+    ]
+  );
+
+  const drawing = node('w:drawing', {}, [
+    node('wp:inline', { distT: '0', distB: '0', distL: '0', distR: '0' }, [
+      extentNode,
+      docPrNode,
+      node('wp:cNvGraphicFramePr', {}, [
+        node('a:graphicFrameLocks', {
+          'xmlns:a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
+          noChangeAspect: '1',
+        }),
+      ]),
+      node(
+        'a:graphic',
+        { 'xmlns:a': 'http://schemas.openxmlformats.org/drawingml/2006/main' },
+        [
+          node(
+            'a:graphicData',
+            { uri: 'http://schemas.openxmlformats.org/drawingml/2006/picture' },
+            [pic]
+          ),
+        ]
+      ),
+    ]),
+  ]);
+
+  // Store the pending node for insertion into document tree
+  // Caption will be added after image data is resolved (if caption is provided)
+  ctx.pendingImageNode = { image: drawing };
+
+  // Return the pending download with node references
+  return {
+    id: relId,
+    fetchImage: () => Promise.resolve(undefined), // Will be replaced with actual fetch function
+    cmd,
+    extentNode,
+    picExtNode,
+    xfrmNode,
+    blipNode,
+    extLstNode,
+    docPrNode,
+    cNvPrNode,
+    drawingNode: drawing, // Store reference for caption handling
+  };
+};
+
+/**
+ * Resolve all pending image downloads in parallel with concurrency control.
+ * This should be called after template walking completes but before XML generation.
+ * Updates ctx.images with the resolved image data and updates XML node dimensions.
+ */
+export async function resolvePendingImages(
+  ctx: Context,
+  concurrency: number = DEFAULT_IMAGE_CONCURRENCY
+): Promise<void> {
+  const pendingDownloads = ctx.pendingImageDownloads;
+  if (pendingDownloads.length === 0) return;
+
+  logger.debug(
+    `Resolving ${pendingDownloads.length} pending image downloads with concurrency limit of ${concurrency}...`
+  );
+
+  // Create a concurrency limiter
+  const limit = pLimit(concurrency);
+
+  // Execute downloads with concurrency control
+  const results = await Promise.allSettled(
+    pendingDownloads.map(pd => limit(() => pd.fetchImage()))
+  );
+
+  // Process results and update nodes
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    const pending = pendingDownloads[i];
+
+    if (result.status === 'rejected') {
+      // Handle download failure
+      const error = result.reason;
+      if (ctx.options.errorHandler != null) {
+        await ctx.options.errorHandler(
+          error instanceof Error ? error : new Error(String(error)),
+          pending.cmd
+        );
+      } else if (ctx.options.failFast) {
+        throw new ImageError(
+          error instanceof Error ? error : new Error(String(error)),
+          pending.cmd
+        );
+      }
+
+      // Skip this image - it will have placeholder dimensions
+      continue;
+    }
+
+    const imagePars = result.value;
+    if (imagePars == null) {
+      // No image returned, skip
+      continue;
+    }
+
+    try {
+      // Validate image parameters
+      validateImagePars(imagePars);
+
+      // Calculate dimensions
+      const cx = (imagePars.width * 360e3).toFixed(0);
+      const cy = (imagePars.height * 360e3).toFixed(0);
+
+      // Update XML node dimensions
+      if (pending.extentNode) {
+        pending.extentNode._attrs.cx = cx;
+        pending.extentNode._attrs.cy = cy;
+      }
+      if (pending.picExtNode) {
+        pending.picExtNode._attrs.cx = cx;
+        pending.picExtNode._attrs.cy = cy;
+      }
+
+      // Handle rotation
+      if (imagePars.rotation && pending.xfrmNode) {
+        const rot = (imagePars.rotation * 60e3).toString();
+        pending.xfrmNode._attrs.rot = rot;
+      }
+
+      // Handle alt text
+      const alt = imagePars.alt || '';
+      if (pending.docPrNode) {
+        pending.docPrNode._attrs.descr = alt;
+      }
+      if (pending.cNvPrNode) {
+        pending.cNvPrNode._attrs.descr = alt;
+      }
+
+      // Store image data
+      const imgData = getImageData(imagePars);
+      validateImage(imgData);
+
+      // Handle SVG images - need to add thumbnail
+      if (imgData.extension === '.svg') {
+        const thumbnail: Image = imagePars.thumbnail ?? {
+          data: 'bm90aGluZwo=',
+          extension: '.png',
+        };
+
+        // Store the SVG with its original ID
+        ctx.images[pending.id] = imgData;
+
+        // Create a new ID for the thumbnail
+        ctx.imageAndShapeIdIncrement += 1;
+        const thumbId = String(ctx.imageAndShapeIdIncrement);
+        const thumbRelId = `img${thumbId}`;
+        validateImage(thumbnail);
+        ctx.images[thumbRelId] = thumbnail;
+
+        // Add SVG extension to extLst
+        if (pending.extLstNode) {
+          const svgBlipNode = newNonTextNode('asvg:svgBlip', {
+            'xmlns:asvg':
+              'http://schemas.microsoft.com/office/drawing/2016/SVG/main',
+            'r:embed': pending.id,
+          });
+          const svgExtNode = newNonTextNode(
+            'a:ext',
+            { uri: '{96DAC541-7B7A-43D3-8B79-37D633B846F1}' },
+            [svgBlipNode]
+          );
+          // Set parent references
+          svgExtNode._parent = pending.extLstNode;
+          svgBlipNode._parent = svgExtNode;
+          pending.extLstNode._children.push(svgExtNode);
+        }
+
+        // Update blip to reference thumbnail instead of SVG
+        if (pending.blipNode) {
+          pending.blipNode._attrs['r:embed'] = thumbRelId;
+        }
+      } else {
+        // Non-SVG image - just store the data
+        ctx.images[pending.id] = imgData;
+      }
+
+      // Handle caption if provided
+      if (imagePars.caption && pending.captionParent) {
+        const captionBr = newNonTextNode('w:br', {});
+        const captionText = newTextNode(imagePars.caption);
+        const captionT = newNonTextNode('w:t', {}, [captionText]);
+
+        // Set parent references
+        captionBr._parent = pending.captionParent;
+        captionT._parent = pending.captionParent;
+        captionText._parent = captionT;
+
+        // Add caption nodes after the drawing node
+        pending.captionParent._children.push(captionBr);
+        pending.captionParent._children.push(captionT);
+      }
+    } catch (e) {
+      if (!isError(e)) throw e;
+      if (ctx.options.errorHandler != null) {
+        await ctx.options.errorHandler(e, pending.cmd);
+      } else if (ctx.options.failFast) {
+        throw new ImageError(e, pending.cmd);
+      }
+    }
+  }
+
+  // Clear the pending downloads
+  ctx.pendingImageDownloads = [];
+  logger.debug('All pending image downloads resolved.');
+}
+
+function getImageData(imagePars: ImagePars): Image {
+  const { data, extension } = imagePars;
+  if (!extension) {
+    throw new Error(
+      'If you return image `data`, make sure you return an extension as well!'
+    );
+  }
+  return { extension, data };
+}
+
+// Process image and build XML node - used after image data is resolved
+const processImage = (
+  ctx: Context,
+  imagePars: ImagePars,
+  preAssignedRelId?: string
+) => {
   validateImagePars(imagePars);
   const cx = (imagePars.width * 360e3).toFixed(0);
   const cy = (imagePars.height * 360e3).toFixed(0);
 
-  let imgRelId = imageToContext(ctx, getImageData(imagePars));
-  const id = String(ctx.imageAndShapeIdIncrement);
+  let imgRelId: string;
+  let id: string;
+
+  if (preAssignedRelId) {
+    // Use pre-assigned ID from parallel download
+    imgRelId = preAssignedRelId;
+    id = preAssignedRelId.replace('img', '');
+    // Store the image data directly with the pre-assigned ID
+    const imgData = getImageData(imagePars);
+    validateImage(imgData);
+    ctx.images[imgRelId] = imgData;
+  } else {
+    // Legacy path: assign new ID
+    imgRelId = imageToContext(ctx, getImageData(imagePars));
+    id = String(ctx.imageAndShapeIdIncrement);
+  }
   const alt = imagePars.alt || '';
   const node = newNonTextNode;
 
@@ -1105,16 +1463,6 @@ const processImage = (ctx: Context, imagePars: ImagePars) => {
     ];
   }
 };
-
-function getImageData(imagePars: ImagePars): Image {
-  const { data, extension } = imagePars;
-  if (!extension) {
-    throw new Error(
-      'If you return image `data`, make sure you return an extension as well!'
-    );
-  }
-  return { extension, data };
-}
 
 const processLink = async (ctx: Context, linkPars: LinkPars) => {
   const { url, label = url } = linkPars;

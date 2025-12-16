@@ -2,6 +2,7 @@
 
 import path from 'path';
 import fs from 'fs';
+import { PNG } from 'pngjs';
 import { createReport } from '../index';
 import { Image, ImagePars } from '../types';
 import { setDebugLogSink } from '../debug';
@@ -503,4 +504,235 @@ it('can inject image in document that already contained image with same extensio
 
   // For easy testing purpose
   // fs.writeFileSync('output.docx', report);
+});
+
+describe('012: Sequential vs Concurrent image processing', () => {
+  const IMAGE_COUNT = 20;
+  const IMAGE_DELAY_MS = 100;
+
+  type ImageData = { width: number; height: number; data: Buffer };
+  const imageCache: Map<string, ImageData> = new Map();
+
+  async function loadBaseImage(filename: string): Promise<ImageData> {
+    const cached = imageCache.get(filename);
+    if (cached) return cached;
+
+    const imagePath = path.join(__dirname, 'fixtures', filename);
+    const imageBuffer = await fs.promises.readFile(imagePath);
+
+    return new Promise((resolve, reject) => {
+      new PNG().parse(imageBuffer, (err, png) => {
+        if (err) return reject(err);
+        const imageData: ImageData = {
+          width: png.width,
+          height: png.height,
+          data: Buffer.from(png.data),
+        };
+        imageCache.set(filename, imageData);
+        resolve(imageData);
+      });
+    });
+  }
+
+  function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+    const m = l - c / 2;
+
+    let r = 0,
+      g = 0,
+      b = 0;
+    if (h < 60) {
+      r = c;
+      g = x;
+    } else if (h < 120) {
+      r = x;
+      g = c;
+    } else if (h < 180) {
+      g = c;
+      b = x;
+    } else if (h < 240) {
+      g = x;
+      b = c;
+    } else if (h < 300) {
+      r = x;
+      b = c;
+    } else {
+      r = c;
+      b = x;
+    }
+
+    return [
+      Math.round((r + m) * 255),
+      Math.round((g + m) * 255),
+      Math.round((b + m) * 255),
+    ];
+  }
+
+  async function createVariantImage(
+    index: number,
+    totalImages: number,
+    baseFilename: string = 'cube.png'
+  ): Promise<Buffer> {
+    const baseImageData = await loadBaseImage(baseFilename);
+
+    const png = new PNG({
+      width: baseImageData.width,
+      height: baseImageData.height,
+    });
+    baseImageData.data.copy(png.data);
+
+    const hue = (index * 360) / totalImages;
+    const saturation = 0.7 + (index % 3) * 0.1;
+    const lightness = 0.4 + (index % 5) * 0.05;
+    const [r, g, b] = hslToRgb(hue % 360, saturation, lightness);
+
+    const squareSize = Math.floor(Math.min(png.width, png.height) * 0.3);
+    const startX = Math.floor((png.width - squareSize) / 2);
+    const startY = Math.floor((png.height - squareSize) / 2);
+
+    for (let y = startY; y < startY + squareSize; y++) {
+      for (let x = startX; x < startX + squareSize; x++) {
+        const idx = (png.width * y + x) << 2;
+        png.data[idx] = r;
+        png.data[idx + 1] = g;
+        png.data[idx + 2] = b;
+        png.data[idx + 3] = 255;
+      }
+    }
+
+    return PNG.sync.write(png);
+  }
+
+  it('produces identical output for sequential and concurrent processing', async () => {
+    const template = await fs.promises.readFile(
+      path.join(__dirname, 'fixtures', 'stress_test_template.docx')
+    );
+
+    const baseFilename = 'cube.png';
+    await loadBaseImage(baseFilename);
+
+    const images = Array.from({ length: IMAGE_COUNT }, (_, i) => i);
+    const data = { images };
+
+    const createGetImageFn = () => async (index: number) => {
+      await new Promise(resolve => setTimeout(resolve, IMAGE_DELAY_MS));
+      const imageBuffer = await createVariantImage(
+        index,
+        IMAGE_COUNT,
+        baseFilename
+      );
+      return {
+        width: 6,
+        height: 6,
+        data: imageBuffer,
+        extension: '.png' as const,
+      };
+    };
+
+    // Sequential execution
+    const sequentialReport = await createReport({
+      template,
+      data,
+      additionalJsContext: { getImage: createGetImageFn() },
+      cmdDelimiter: ['{{', '}}'],
+    });
+
+    // Concurrent execution (imageConcurrency: 5 means process 5 at a time)
+    const concurrentReport = await createReport({
+      template,
+      data,
+      additionalJsContext: { getImage: createGetImageFn() },
+      cmdDelimiter: ['{{', '}}'],
+      imageConcurrency: 5,
+    });
+
+    // Both should produce valid output
+    expect(sequentialReport).toBeInstanceOf(Uint8Array);
+    expect(concurrentReport).toBeInstanceOf(Uint8Array);
+
+    // Extract and compare document.xml from both
+    const sequentialZip = await JSZip.loadAsync(sequentialReport);
+    const concurrentZip = await JSZip.loadAsync(concurrentReport);
+
+    const sequentialDoc = await sequentialZip
+      .file('word/document.xml')
+      ?.async('string');
+    const concurrentDoc = await concurrentZip
+      .file('word/document.xml')
+      ?.async('string');
+
+    // The document XML should be identical
+    expect(sequentialDoc).toBeDefined();
+    expect(concurrentDoc).toBeDefined();
+    expect(sequentialDoc).toEqual(concurrentDoc);
+
+    // Snapshot the document.xml
+    expect(sequentialDoc).toMatchSnapshot('document.xml');
+
+    // Verify media files count
+    const sequentialMediaFiles = Object.keys(sequentialZip.files).filter(f =>
+      f.startsWith('word/media/')
+    );
+    const concurrentMediaFiles = Object.keys(concurrentZip.files).filter(f =>
+      f.startsWith('word/media/')
+    );
+
+    expect(sequentialMediaFiles.length).toBe(concurrentMediaFiles.length);
+    expect(sequentialMediaFiles.length).toBeGreaterThanOrEqual(IMAGE_COUNT);
+
+    // Snapshot the media files structure
+    expect(sequentialMediaFiles.sort()).toMatchSnapshot('media-files');
+  }, 120000);
+
+  it('concurrent processing is faster than sequential', async () => {
+    const template = await fs.promises.readFile(
+      path.join(__dirname, 'fixtures', 'stress_test_template.docx')
+    );
+
+    const baseFilename = 'cube.png';
+    await loadBaseImage(baseFilename);
+
+    const images = Array.from({ length: IMAGE_COUNT }, (_, i) => i);
+    const data = { images };
+
+    const createGetImageFn = () => async (index: number) => {
+      await new Promise(resolve => setTimeout(resolve, IMAGE_DELAY_MS));
+      const imageBuffer = await createVariantImage(
+        index,
+        IMAGE_COUNT,
+        baseFilename
+      );
+      return {
+        width: 6,
+        height: 6,
+        data: imageBuffer,
+        extension: '.png' as const,
+      };
+    };
+
+    // Sequential execution
+    const sequentialStart = Date.now();
+    await createReport({
+      template,
+      data,
+      additionalJsContext: { getImage: createGetImageFn() },
+      cmdDelimiter: ['{{', '}}'],
+    });
+    const sequentialTime = Date.now() - sequentialStart;
+
+    // Concurrent execution (imageConcurrency: 5 means process 5 at a time)
+    const concurrentStart = Date.now();
+    await createReport({
+      template,
+      data,
+      additionalJsContext: { getImage: createGetImageFn() },
+      cmdDelimiter: ['{{', '}}'],
+      imageConcurrency: 5,
+    });
+    const concurrentTime = Date.now() - concurrentStart;
+
+    // Concurrent should be faster than sequential
+    expect(concurrentTime).toBeLessThan(sequentialTime);
+  }, 60000);
 });
