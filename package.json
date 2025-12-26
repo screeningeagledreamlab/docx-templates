@@ -34,7 +34,7 @@
     "testCovReport": "cp -r .nyc_tmp .nyc_output && nyc report --reporter=html --reporter=lcov --reporter=text",
     "lint": "eslint \"src/**/*.{js,jsx,ts,tsx}\"",
     "lint-fix": "eslint --fix \"src/**/*.{js,jsx,ts,tsx}\"",
-    "test:stress": "jest --testPathPattern=stress-images.test.ts --testTimeout=300000"
+    "test:images": "jest --testPathPattern=images.test.ts --testTimeout=300000"
   },
   "engines": {
     "node": ">=6"
