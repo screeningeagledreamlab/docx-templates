@@ -98,31 +98,43 @@ function buildXml(
   return Buffer.concat(xmlBuffers);
 }
 
+// MEMORY OPTIMIZATION: Combined regex for XML entity escaping (single pass instead of multiple)
+const TEXT_ENTITIES: Record<string, string> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+};
+const TEXT_ESCAPE_REGEX = /[&<>]/g;
+
+const ATTR_ENTITIES: Record<string, string> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  "'": '&apos;',
+  '"': '&quot;',
+};
+const ATTR_ESCAPE_REGEX = /[&<>'"]/g;
+
 const sanitizeText = (str: string, options: XmlOptions) => {
-  let out = '';
   const segments = str.split(options.literalXmlDelimiter);
+  const result: string[] = [];
   let fLiteral = false;
   for (let i = 0; i < segments.length; i++) {
-    let processedSegment = segments[i];
-    if (!fLiteral) {
-      processedSegment = processedSegment.replace(/&/g, '&amp;'); // must be the first one
-      processedSegment = processedSegment.replace(/</g, '&lt;');
-      processedSegment = processedSegment.replace(/>/g, '&gt;');
-    }
-    out += processedSegment;
+    const segment = segments[i];
+    result.push(
+      fLiteral
+        ? segment
+        : segment.replace(TEXT_ESCAPE_REGEX, ch => TEXT_ENTITIES[ch])
+    );
     fLiteral = !fLiteral;
   }
-  return out;
+  return result.join('');
 };
 
 const sanitizeAttr = (attr: string | QualifiedAttribute) => {
-  let out = typeof attr === 'string' ? attr : attr.value;
-  out = out.replace(/&/g, '&amp;'); // must be the first one
-  out = out.replace(/</g, '&lt;');
-  out = out.replace(/>/g, '&gt;');
-  out = out.replace(/'/g, '&apos;');
-  out = out.replace(/"/g, '&quot;');
-  return out;
+  const value = typeof attr === 'string' ? attr : attr.value;
+
+  return value.replace(ATTR_ESCAPE_REGEX, ch => ATTR_ENTITIES[ch]);
 };
 
 // ==========================================

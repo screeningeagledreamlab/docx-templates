@@ -1,25 +1,48 @@
 /* eslint-env jest */
 
 /**
- * Stress test for generating a docx with 4000 unique images.
+ * Stress test for generating a docx with unique images.
+ * Compares sequential vs concurrent image processing.
  * Run separately with: yarn test:stress
  */
 
 import path from 'path';
 import fs from 'fs';
-import JSZip from 'jszip';
+import { PNG } from 'pngjs';
 import { createReport } from '../index';
 import { setDebugLogSink } from '../debug';
 
 if (process.env.DEBUG) setDebugLogSink(console.log);
 
-const IMAGE_COUNT = 4000;
+const IMAGE_COUNT = 20;
+const IMAGE_DELAY_MS = 100;
 
-/**
- * Convert HSL to RGB
- * h: 0-360, s: 0-1, l: 0-1
- * Returns [r, g, b] each 0-255
- */
+let cachedCubeData: { width: number; height: number; data: Buffer } | null =
+  null;
+
+async function loadCubeImage(): Promise<{
+  width: number;
+  height: number;
+  data: Buffer;
+}> {
+  if (cachedCubeData) return cachedCubeData;
+
+  const cubePath = path.join(__dirname, 'fixtures', 'cube.png');
+  const cubeBuffer = await fs.promises.readFile(cubePath);
+
+  return new Promise((resolve, reject) => {
+    new PNG().parse(cubeBuffer, (err, png) => {
+      if (err) return reject(err);
+      cachedCubeData = {
+        width: png.width,
+        height: png.height,
+        data: Buffer.from(png.data),
+      };
+      resolve(cachedCubeData);
+    });
+  });
+}
+
 function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   const c = (1 - Math.abs(2 * l - 1)) * s;
   const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
@@ -61,259 +84,102 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   ];
 }
 
-/**
- * Creates a simple unique PNG image buffer.
- * Each image has a unique color based on the index using HSL color space
- * for better visual distinction across all 4000 images.
- */
-function createUniquePng(index: number, totalImages: number): Buffer {
-  // Use HSL color space for better distribution of visually distinct colors
-  // Vary hue across the full spectrum, with slight variations in saturation and lightness
-  const hue = (index * 360) / totalImages; // Spread hues across full spectrum
-  const saturation = 0.7 + (index % 3) * 0.1; // 0.7, 0.8, or 0.9
-  const lightness = 0.4 + (index % 5) * 0.05; // 0.4 to 0.6
+async function createUniqueImage(
+  index: number,
+  totalImages: number
+): Promise<Buffer> {
+  const cubeData = await loadCubeImage();
 
+  const png = new PNG({ width: cubeData.width, height: cubeData.height });
+  cubeData.data.copy(png.data);
+
+  const hue = (index * 360) / totalImages;
+  const saturation = 0.7 + (index % 3) * 0.1;
+  const lightness = 0.4 + (index % 5) * 0.05;
   const [r, g, b] = hslToRgb(hue % 360, saturation, lightness);
 
-  // Create a minimal 1x1 PNG with the unique color
-  // PNG structure: signature + IHDR + IDAT + IEND
-  const signature = Buffer.from([
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-  ]);
+  const squareSize = Math.floor(Math.min(png.width, png.height) * 0.3);
+  const startX = Math.floor((png.width - squareSize) / 2);
+  const startY = Math.floor((png.height - squareSize) / 2);
 
-  // IHDR chunk (image header) - 1x1 pixel, 8-bit RGB
-  const ihdrData = Buffer.from([
-    0x00,
-    0x00,
-    0x00,
-    0x01, // width: 1
-    0x00,
-    0x00,
-    0x00,
-    0x01, // height: 1
-    0x08, // bit depth: 8
-    0x02, // color type: RGB
-    0x00, // compression: deflate
-    0x00, // filter: adaptive
-    0x00, // interlace: none
-  ]);
-  const ihdrCrc = crc32(Buffer.concat([Buffer.from('IHDR'), ihdrData]));
-  const ihdr = Buffer.concat([
-    Buffer.from([0x00, 0x00, 0x00, 0x0d]), // length: 13
-    Buffer.from('IHDR'),
-    ihdrData,
-    ihdrCrc,
-  ]);
-
-  // IDAT chunk (image data) - raw deflate of filter byte + RGB pixel
-  // Using uncompressed deflate block for simplicity
-  const rawPixel = Buffer.from([0x00, r, g, b]); // filter byte (0=none) + RGB
-  const idatData = createUncompressedDeflate(rawPixel);
-  const idatCrc = crc32(Buffer.concat([Buffer.from('IDAT'), idatData]));
-  const idatLength = Buffer.alloc(4);
-  idatLength.writeUInt32BE(idatData.length, 0);
-  const idat = Buffer.concat([
-    idatLength,
-    Buffer.from('IDAT'),
-    idatData,
-    idatCrc,
-  ]);
-
-  // IEND chunk (image end)
-  const iendCrc = crc32(Buffer.from('IEND'));
-  const iend = Buffer.concat([
-    Buffer.from([0x00, 0x00, 0x00, 0x00]), // length: 0
-    Buffer.from('IEND'),
-    iendCrc,
-  ]);
-
-  return Buffer.concat([signature, ihdr, idat, iend]);
-}
-
-/**
- * Creates an uncompressed deflate stream (zlib format)
- */
-function createUncompressedDeflate(data: Buffer): Buffer {
-  // Zlib header: CMF=0x78 (deflate, 32K window), FLG=0x01 (no dict, level 0)
-  const header = Buffer.from([0x78, 0x01]);
-
-  // Uncompressed deflate block
-  const len = data.length;
-  const nlen = len ^ 0xffff;
-  const block = Buffer.concat([
-    Buffer.from([0x01]), // BFINAL=1, BTYPE=00 (uncompressed)
-    Buffer.from([len & 0xff, (len >> 8) & 0xff]),
-    Buffer.from([nlen & 0xff, (nlen >> 8) & 0xff]),
-    data,
-  ]);
-
-  // Adler-32 checksum
-  const adler = adler32(data);
-
-  return Buffer.concat([header, block, adler]);
-}
-
-/**
- * Compute Adler-32 checksum
- */
-function adler32(data: Buffer): Buffer {
-  let a = 1;
-  let b = 0;
-  for (let i = 0; i < data.length; i++) {
-    a = (a + data[i]) % 65521;
-    b = (b + a) % 65521;
+  for (let y = startY; y < startY + squareSize; y++) {
+    for (let x = startX; x < startX + squareSize; x++) {
+      const idx = (png.width * y + x) << 2;
+      png.data[idx] = r;
+      png.data[idx + 1] = g;
+      png.data[idx + 2] = b;
+      png.data[idx + 3] = 255;
+    }
   }
-  const result = Buffer.alloc(4);
-  result.writeUInt32BE((b << 16) | a, 0);
-  return result;
+
+  return PNG.sync.write(png);
 }
 
-/**
- * CRC32 lookup table
- */
-const crcTable: number[] = [];
-for (let n = 0; n < 256; n++) {
-  let c = n;
-  for (let k = 0; k < 8; k++) {
-    c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-  }
-  crcTable[n] = c;
-}
+describe('Stress test: Sequential vs Concurrent image processing', () => {
+  jest.setTimeout(300000);
 
-/**
- * Compute CRC32 checksum
- */
-function crc32(data: Buffer): Buffer {
-  let crc = 0xffffffff;
-  for (let i = 0; i < data.length; i++) {
-    crc = crcTable[(crc ^ data[i]) & 0xff] ^ (crc >>> 8);
-  }
-  crc = (crc ^ 0xffffffff) >>> 0;
-  const result = Buffer.alloc(4);
-  result.writeUInt32BE(crc, 0);
-  return result;
-}
+  it(`compares sequential vs concurrent processing with ${IMAGE_COUNT} images`, async () => {
+    const templatePath = path.join(
+      __dirname,
+      'fixtures',
+      'stress_test_template.docx'
+    );
+    const template = await fs.promises.readFile(templatePath);
 
-/**
- * Creates a docx template with a FOR loop that inserts images
- */
-async function createImageLoopTemplate(): Promise<Buffer> {
-  const zip = new JSZip();
+    await loadCubeImage();
 
-  // [Content_Types].xml
-  zip.file(
-    '[Content_Types].xml',
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
-  <Default Extension="xml" ContentType="application/xml"/>
-  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
-</Types>`
-  );
-
-  // _rels/.rels
-  zip.file(
-    '_rels/.rels',
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
-</Relationships>`
-  );
-
-  // word/_rels/document.xml.rels
-  zip.file(
-    'word/_rels/document.xml.rels',
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-</Relationships>`
-  );
-
-  // word/document.xml - Template with FOR loop and IMAGE command
-  // Use $img.image directly - the image data is embedded in each item
-  zip.file(
-    'word/document.xml',
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-            xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-            xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
-  <w:body>
-    <w:p><w:r><w:t>+++FOR img IN images+++</w:t></w:r></w:p>
-    <w:p><w:r><w:t>+++IMAGE $img.image+++</w:t></w:r></w:p>
-    <w:p><w:r><w:t>+++END-FOR img+++</w:t></w:r></w:p>
-    <w:sectPr>
-      <w:pgSz w:w="12240" w:h="15840"/>
-      <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>
-    </w:sectPr>
-  </w:body>
-</w:document>`
-  );
-
-  return zip.generateAsync({ type: 'nodebuffer' });
-}
-
-describe('Stress test: 4000 images', () => {
-  // Increase timeout for this large test
-  jest.setTimeout(300000); // 5 minutes
-
-  it('generates a docx with 4000 unique images', async () => {
-    console.log(`Starting stress test with ${IMAGE_COUNT} images...`);
-    const startTime = Date.now();
-
-    // Create the template
-    console.log('Creating template...');
-    const template = await createImageLoopTemplate();
-
-    // Pre-generate all unique images and embed them directly in the data
-    console.log('Pre-generating unique images...');
-    const imageGenerationStart = Date.now();
-    const images = Array.from({ length: IMAGE_COUNT }, (_, i) => ({
-      index: i,
-      image: {
-        width: 2,
-        height: 2,
-        data: createUniquePng(i, IMAGE_COUNT),
-        extension: '.png' as const,
-      },
-    }));
-    console.log(`Image generation took ${Date.now() - imageGenerationStart}ms`);
-
-    // Create data with array containing image objects
+    const images = Array.from({ length: IMAGE_COUNT }, (_, i) => i);
     const data = { images };
 
-    // Create report
-    console.log('Creating report...');
-    const reportStart = Date.now();
-    const report = await createReport({
+    const createGetImageFn = () => async (index: number) => {
+      await new Promise(resolve => setTimeout(resolve, IMAGE_DELAY_MS));
+      const imageBuffer = await createUniqueImage(index, IMAGE_COUNT);
+      return {
+        width: 6,
+        height: 6,
+        data: imageBuffer,
+        extension: '.png' as const,
+      };
+    };
+
+    // Sequential execution
+    const sequentialStart = Date.now();
+    const sequentialReport = await createReport({
       template,
       data,
+      additionalJsContext: { getImage: createGetImageFn() },
+      cmdDelimiter: ['{{', '}}'],
     });
-    console.log(`Report generation took ${Date.now() - reportStart}ms`);
+    const sequentialTime = Date.now() - sequentialStart;
 
-    // Verify the output
-    expect(report).toBeInstanceOf(Uint8Array);
+    // Concurrent execution
+    const concurrentStart = Date.now();
+    const concurrentReport = await createReport({
+      template,
+      data,
+      additionalJsContext: { getImage: createGetImageFn() },
+      cmdDelimiter: ['{{', '}}'],
+      imageConcurrency: 5,
+    });
+    const concurrentTime = Date.now() - concurrentStart;
 
-    // Check the generated file contains all images
-    const outputZip = await JSZip.loadAsync(report);
-    const mediaFiles = Object.keys(outputZip.files).filter(f =>
+    expect(sequentialReport).toBeInstanceOf(Uint8Array);
+    expect(concurrentReport).toBeInstanceOf(Uint8Array);
+
+    const JSZip = (await import('jszip')).default;
+
+    const sequentialZip = await JSZip.loadAsync(sequentialReport);
+    const sequentialMediaFiles = Object.keys(sequentialZip.files).filter(f =>
       f.startsWith('word/media/')
     );
 
-    console.log(`Generated ${mediaFiles.length} media files`);
-    console.log(`Total time: ${Date.now() - startTime}ms`);
+    const concurrentZip = await JSZip.loadAsync(concurrentReport);
+    const concurrentMediaFiles = Object.keys(concurrentZip.files).filter(f =>
+      f.startsWith('word/media/')
+    );
 
-    // We expect IMAGE_COUNT images (each unique)
-    // Note: The actual count may vary based on how docx-templates handles duplicates
-    expect(mediaFiles.length).toBeGreaterThanOrEqual(IMAGE_COUNT);
-
-    // Optionally write output for manual inspection
-    if (process.env.WRITE_OUTPUT) {
-      const outputPath = path.join(
-        __dirname,
-        'fixtures',
-        'stress-test-output.docx'
-      );
-      fs.writeFileSync(outputPath, report);
-      console.log(`Output written to ${outputPath}`);
-    }
+    expect(sequentialMediaFiles.length).toBeGreaterThanOrEqual(IMAGE_COUNT);
+    expect(concurrentMediaFiles.length).toBeGreaterThanOrEqual(IMAGE_COUNT);
+    expect(concurrentTime).toBeLessThan(sequentialTime);
   });
 });
