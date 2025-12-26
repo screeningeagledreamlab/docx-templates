@@ -219,9 +219,11 @@ async function createReport(
     throw result.errors;
   }
 
-  // Resolve all pending image downloads in parallel with concurrency control
-  logger.debug('Resolving pending image downloads...');
-  await resolvePendingImages(ctx, createOptions.imageConcurrency);
+  // Resolve pending image downloads only if parallel mode is enabled
+  if (createOptions.imageConcurrency != null) {
+    logger.debug('Resolving pending image downloads in parallel...');
+    await resolvePendingImages(ctx, createOptions.imageConcurrency);
+  }
 
   const {
     report: report1,
@@ -252,8 +254,10 @@ async function createReport(
       throw result.errors;
     }
 
-    // Resolve pending images for this secondary XML
-    await resolvePendingImages(ctx, createOptions.imageConcurrency);
+    // Resolve pending images for this secondary XML (only if parallel mode is enabled)
+    if (createOptions.imageConcurrency != null) {
+      await resolvePendingImages(ctx, createOptions.imageConcurrency);
+    }
 
     const {
       report: report2,
@@ -522,6 +526,9 @@ const processImages = async (
         Target: `media/${imgName}`,
       })
     );
+
+    // Release image data after adding to ZIP
+    delete images[imageId];
   }
   const finalRelsXml = buildXml(rels, {
     literalXmlDelimiter: DEFAULT_LITERAL_XML_DELIMITER,

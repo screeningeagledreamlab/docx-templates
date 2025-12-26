@@ -147,8 +147,10 @@ export type UserOptions = {
   compressionLevel?: number;
   /**
    * Maximum number of concurrent image downloads.
-   * Useful for controlling resource usage when processing templates with many images.
-   * (Default: 10)
+   * When set, enables parallel image processing mode where all IMAGE commands
+   * are collected during template walking and resolved in parallel at the end.
+   * When not set (default), images are processed inline during template walking.
+   * Parallel mode is useful for templates with many images that do processings. eg: fetch from URLs, rotating.
    */
   imageConcurrency?: number;
 };

@@ -580,7 +580,7 @@ const processText = async (
     .split(cmdDelimiter[0])
     .map(s => s.split(cmdDelimiter[1]))
     .reduce((x, y) => x.concat(y));
-  let outText = '';
+  const outParts: string[] = [];
   const errors: Error[] = [];
   for (let idx = 0; idx < segments.length; idx++) {
     // Include the separators in the `buffers` field (used for deleting paragraphs if appropriate)
@@ -591,7 +591,7 @@ const processText = async (
     const segment = segments[idx];
     // logger.debug(`Token: '${segment}' (${ctx.fCmd})`);
     if (ctx.fCmd) ctx.cmd += segment;
-    else if (!isLoopExploring(ctx)) outText += segment;
+    else if (!isLoopExploring(ctx)) outParts.push(segment);
     appendTextToTagBuffers(segment, ctx, { fCmd: ctx.fCmd });
 
     // If there are more segments, execute the command (if we are in "command mode"),
@@ -601,7 +601,7 @@ const processText = async (
         const cmdResultText = await onCommand(data, node, ctx);
         if (cmdResultText != null) {
           if (typeof cmdResultText === 'string') {
-            outText += cmdResultText;
+            outParts.push(cmdResultText);
             appendTextToTagBuffers(cmdResultText, ctx, {
               fCmd: false,
               fInsertedText: true,
@@ -616,7 +616,7 @@ const processText = async (
     }
   }
   if (errors.length > 0) return errors;
-  return outText;
+  return outParts.join('');
 };
 
 // ==========================================
@@ -709,38 +709,65 @@ const processCmd: CommandProcessor = async (
       // IMAGE <code>
     } else if (cmdName === 'IMAGE') {
       if (!isLoopExploring(ctx)) {
-        // Pre-assign image ID so XML structure can be built now
-        ctx.imageAndShapeIdIncrement += 1;
-        const id = String(ctx.imageAndShapeIdIncrement);
-        const relId = `img${id}`;
+        // Check if parallel image processing is enabled
+        if (ctx.options.imageConcurrency != null) {
+          // PARALLEL MODE: Defer image fetching until all commands are processed
+          // Pre-assign image ID so XML structure can be built now
+          ctx.imageAndShapeIdIncrement += 1;
+          const id = String(ctx.imageAndShapeIdIncrement);
+          const relId = `img${id}`;
 
-        // Build placeholder XML structure with node references for later updates
-        const pendingDownload = buildPendingImageNode(ctx, relId, id, cmd);
+          // Build placeholder XML structure with node references for later updates
+          const pendingDownload = buildPendingImageNode(ctx, relId, id, cmd);
 
-        // IMPORTANT: We must clone both the data object AND ctx.vars to capture current loop values.
-        // These are mutated during template walking (especially in FOR loops),
-        // so by the time fetchImage() is called later, they would have the LAST loop values.
-        const clonedData = { ...data };
-        const clonedVars = { ...ctx.vars };
-        const clonedIdx = getCurLoop(ctx)?.idx;
-        pendingDownload.fetchImage = () => {
-          // Temporarily swap in the cloned vars for this evaluation
-          const savedVars = ctx.vars;
-          const savedLoop = getCurLoop(ctx);
-          const savedIdx = savedLoop?.idx;
-          ctx.vars = clonedVars;
-          if (savedLoop && clonedIdx !== undefined) savedLoop.idx = clonedIdx;
-          try {
-            return runUserJsAndGetRaw(clonedData, cmdRest, ctx);
-          } finally {
-            // Restore original vars
-            ctx.vars = savedVars;
-            if (savedLoop && savedIdx !== undefined) savedLoop.idx = savedIdx;
+          // MEMORY OPTIMIZATION: We capture loop state but NOT the data object.
+          // - `data` is immutable during template processing, so we reference it directly
+          // - `ctx.vars` contains loop variables that change per iteration, so we snapshot them
+          // - Only clone vars when inside a loop (ctx.loops.length > 0) to avoid unnecessary allocations
+          const isInsideLoop = ctx.loops.length > 0;
+          const capturedVars = isInsideLoop ? { ...ctx.vars } : null;
+          const capturedIdx = isInsideLoop ? getCurLoop(ctx)?.idx : undefined;
+
+          pendingDownload.fetchImage = () => {
+            // If we captured loop state, temporarily restore it for this evaluation
+            if (capturedVars !== null) {
+              const savedVars = ctx.vars;
+              const savedLoop = getCurLoop(ctx);
+              const savedIdx = savedLoop?.idx;
+              ctx.vars = capturedVars;
+              if (savedLoop && capturedIdx !== undefined)
+                savedLoop.idx = capturedIdx;
+              try {
+                return runUserJsAndGetRaw(data, cmdRest, ctx);
+              } finally {
+                // Restore original vars
+                ctx.vars = savedVars;
+                if (savedLoop && savedIdx !== undefined)
+                  savedLoop.idx = savedIdx;
+              }
+            }
+            // Not inside a loop - execute directly without state swapping
+            return runUserJsAndGetRaw(data, cmdRest, ctx);
+          };
+
+          // Store the pending download for later resolution
+          ctx.pendingImageDownloads.push(pendingDownload);
+        } else {
+          // INLINE MODE (default): Process image immediately during template walking
+          const img: ImagePars | undefined = await runUserJsAndGetRaw(
+            data,
+            cmdRest,
+            ctx
+          );
+          if (img != null) {
+            try {
+              processImage(ctx, img);
+            } catch (e) {
+              if (!isError(e)) throw e;
+              throw new ImageError(e, cmd);
+            }
           }
-        };
-
-        // Store the pending download for later resolution
-        ctx.pendingImageDownloads.push(pendingDownload);
+        }
       }
 
       // LINK <code>
@@ -1308,6 +1335,134 @@ function getImageData(imagePars: ImagePars): Image {
   }
   return { extension, data };
 }
+
+// Process image and build XML node - used after image data is resolved
+const processImage = (
+  ctx: Context,
+  imagePars: ImagePars,
+  preAssignedRelId?: string
+) => {
+  validateImagePars(imagePars);
+  const cx = (imagePars.width * 360e3).toFixed(0);
+  const cy = (imagePars.height * 360e3).toFixed(0);
+
+  let imgRelId: string;
+  let id: string;
+
+  if (preAssignedRelId) {
+    // Use pre-assigned ID from parallel download
+    imgRelId = preAssignedRelId;
+    id = preAssignedRelId.replace('img', '');
+    // Store the image data directly with the pre-assigned ID
+    const imgData = getImageData(imagePars);
+    validateImage(imgData);
+    ctx.images[imgRelId] = imgData;
+  } else {
+    // Legacy path: assign new ID
+    imgRelId = imageToContext(ctx, getImageData(imagePars));
+    id = String(ctx.imageAndShapeIdIncrement);
+  }
+  const alt = imagePars.alt || '';
+  const node = newNonTextNode;
+
+  const extNodes = [];
+  extNodes.push(
+    node('a:ext', { uri: '{28A0092B-C50C-407E-A947-70E740481C1C}' }, [
+      node('a14:useLocalDpi', {
+        'xmlns:a14': 'http://schemas.microsoft.com/office/drawing/2010/main',
+        val: '0',
+      }),
+    ])
+  );
+
+  // http://officeopenxml.com/drwSp-rotate.php
+  // Values are in 60,000ths of a degree, with positive angles moving clockwise or towards the positive y-axis.
+  const rot = imagePars.rotation
+    ? (imagePars.rotation * 60e3).toString()
+    : undefined;
+
+  if (ctx.images[imgRelId].extension === '.svg') {
+    // Default to an empty thumbnail, as it is not critical and just part of the docx standard's scaffolding.
+    // Without a thumbnail, the svg won't render (even in newer versions of Word that don't need the thumbnail).
+    const thumbnail: Image = imagePars.thumbnail ?? {
+      data: 'bm90aGluZwo=',
+      extension: '.png',
+    };
+
+    const thumbRelId = imageToContext(ctx, thumbnail);
+    extNodes.push(
+      node('a:ext', { uri: '{96DAC541-7B7A-43D3-8B79-37D633B846F1}' }, [
+        node('asvg:svgBlip', {
+          'xmlns:asvg':
+            'http://schemas.microsoft.com/office/drawing/2016/SVG/main',
+          'r:embed': imgRelId,
+        }),
+      ])
+    );
+
+    // For SVG the thumb is placed where the image normally goes.
+    imgRelId = thumbRelId;
+  }
+
+  const pic = node(
+    'pic:pic',
+    { 'xmlns:pic': 'http://schemas.openxmlformats.org/drawingml/2006/picture' },
+    [
+      node('pic:nvPicPr', {}, [
+        node('pic:cNvPr', { id: '0', name: `Picture ${id}`, descr: alt }),
+        node('pic:cNvPicPr', {}, [
+          node('a:picLocks', { noChangeAspect: '1', noChangeArrowheads: '1' }),
+        ]),
+      ]),
+      node('pic:blipFill', {}, [
+        node('a:blip', { 'r:embed': imgRelId, cstate: 'print' }, [
+          node('a:extLst', {}, extNodes),
+        ]),
+        node('a:srcRect'),
+        node('a:stretch', {}, [node('a:fillRect')]),
+      ]),
+      node('pic:spPr', { bwMode: 'auto' }, [
+        node('a:xfrm', rot ? { rot } : {}, [
+          node('a:off', { x: '0', y: '0' }),
+          node('a:ext', { cx, cy }),
+        ]),
+        node('a:prstGeom', { prst: 'rect' }, [node('a:avLst')]),
+        node('a:noFill'),
+        node('a:ln', {}, [node('a:noFill')]),
+      ]),
+    ]
+  );
+  const drawing = node('w:drawing', {}, [
+    node('wp:inline', { distT: '0', distB: '0', distL: '0', distR: '0' }, [
+      node('wp:extent', { cx, cy }),
+      node('wp:docPr', { id, name: `Picture ${id}`, descr: alt }),
+      node('wp:cNvGraphicFramePr', {}, [
+        node('a:graphicFrameLocks', {
+          'xmlns:a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
+          noChangeAspect: '1',
+        }),
+      ]),
+      node(
+        'a:graphic',
+        { 'xmlns:a': 'http://schemas.openxmlformats.org/drawingml/2006/main' },
+        [
+          node(
+            'a:graphicData',
+            { uri: 'http://schemas.openxmlformats.org/drawingml/2006/picture' },
+            [pic]
+          ),
+        ]
+      ),
+    ]),
+  ]);
+  ctx.pendingImageNode = { image: drawing };
+  if (imagePars.caption) {
+    ctx.pendingImageNode.caption = [
+      node('w:br'),
+      node('w:t', {}, [newTextNode(imagePars.caption)]),
+    ];
+  }
+};
 
 const processLink = async (ctx: Context, linkPars: LinkPars) => {
   const { url, label = url } = linkPars;

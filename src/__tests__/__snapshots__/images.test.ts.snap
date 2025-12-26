@@ -200,7 +200,7 @@ exports[`001: Issue #61 Correctly renders an SVG image 1`] = `
                                         {
                                           "_attrs": {
                                             "cstate": "print",
-                                            "r:embed": "img3",
+                                            "r:embed": "img2",
                                           },
                                           "_children": [
                                             {
@@ -652,8 +652,8 @@ exports[`001: Issue #61 Correctly renders an SVG image 1`] = `
                         {
                           "_attrs": {
                             "descr": "",
-                            "id": "2",
-                            "name": "Picture 2",
+                            "id": "3",
+                            "name": "Picture 3",
                           },
                           "_children": [],
                           "_fTextNode": false,
@@ -700,7 +700,7 @@ exports[`001: Issue #61 Correctly renders an SVG image 1`] = `
                                           "_attrs": {
                                             "descr": "",
                                             "id": "0",
-                                            "name": "Picture 2",
+                                            "name": "Picture 3",
                                           },
                                           "_children": [],
                                           "_fTextNode": false,
@@ -769,7 +769,7 @@ exports[`001: Issue #61 Correctly renders an SVG image 1`] = `
                                                   "_children": [
                                                     {
                                                       "_attrs": {
-                                                        "r:embed": "img2",
+                                                        "r:embed": "img3",
                                                         "xmlns:asvg": "http://schemas.microsoft.com/office/drawing/2016/SVG/main",
                                                       },
                                                       "_children": [],
@@ -1389,7 +1389,7 @@ exports[`003: can inject an svg without a thumbnail 1`] = `
                                         {
                                           "_attrs": {
                                             "cstate": "print",
-                                            "r:embed": "img3",
+                                            "r:embed": "img2",
                                           },
                                           "_children": [
                                             {
@@ -1841,8 +1841,8 @@ exports[`003: can inject an svg without a thumbnail 1`] = `
                         {
                           "_attrs": {
                             "descr": "",
-                            "id": "2",
-                            "name": "Picture 2",
+                            "id": "3",
+                            "name": "Picture 3",
                           },
                           "_children": [],
                           "_fTextNode": false,
@@ -1889,7 +1889,7 @@ exports[`003: can inject an svg without a thumbnail 1`] = `
                                           "_attrs": {
                                             "descr": "",
                                             "id": "0",
-                                            "name": "Picture 2",
+                                            "name": "Picture 3",
                                           },
                                           "_children": [],
                                           "_fTextNode": false,
@@ -1958,7 +1958,7 @@ exports[`003: can inject an svg without a thumbnail 1`] = `
                                                   "_children": [
                                                     {
                                                       "_attrs": {
-                                                        "r:embed": "img2",
+                                                        "r:embed": "img3",
                                                         "xmlns:asvg": "http://schemas.microsoft.com/office/drawing/2016/SVG/main",
                                                       },
                                                       "_children": [],
@@ -2707,7 +2707,7 @@ exports[`008: can inject an image in a shape in the doc footer (regression test 
                     </pic:cNvPicPr>
                   </pic:nvPicPr>
                   <pic:blipFill>
-                    <a:blip r:embed="img6" cstate="print">
+                    <a:blip r:embed="img3" cstate="print">
                       <a:extLst>
                         <a:ext uri="{28A0092B-C50C-407E-A947-70E740481C1C}">
                           <a14:useLocalDpi xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main" val="0"/>
@@ -2779,7 +2779,7 @@ exports[`008: can inject an image in a shape in the doc footer (regression test 
         <w:drawing>
           <wp:inline distT="0" distB="0" distL="0" distR="0">
             <wp:extent cx="2160000" cy="2160000"/>
-            <wp:docPr id="3" name="Picture 3" descr=""/>
+            <wp:docPr id="4" name="Picture 4" descr=""/>
             <wp:cNvGraphicFramePr>
               <a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/>
             </wp:cNvGraphicFramePr>
@@ -2787,19 +2787,19 @@ exports[`008: can inject an image in a shape in the doc footer (regression test 
               <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
                 <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
                   <pic:nvPicPr>
-                    <pic:cNvPr id="0" name="Picture 3" descr=""/>
+                    <pic:cNvPr id="0" name="Picture 4" descr=""/>
                     <pic:cNvPicPr>
                       <a:picLocks noChangeAspect="1" noChangeArrowheads="1"/>
                     </pic:cNvPicPr>
                   </pic:nvPicPr>
                   <pic:blipFill>
-                    <a:blip r:embed="img7" cstate="print">
+                    <a:blip r:embed="img5" cstate="print">
                       <a:extLst>
                         <a:ext uri="{28A0092B-C50C-407E-A947-70E740481C1C}">
                           <a14:useLocalDpi xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main" val="0"/>
                         </a:ext>
                         <a:ext uri="{96DAC541-7B7A-43D3-8B79-37D633B846F1}">
-                          <asvg:svgBlip xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main" r:embed="img3"/>
+                          <asvg:svgBlip xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main" r:embed="img4"/>
                         </a:ext>
                       </a:extLst>
                     </a:blip>
@@ -2859,7 +2859,7 @@ exports[`008: can inject an image in a shape in the doc footer (regression test 
         <w:drawing>
           <wp:inline distT="0" distB="0" distL="0" distR="0">
             <wp:extent cx="2160000" cy="2160000"/>
-            <wp:docPr id="4" name="Picture 4" descr=""/>
+            <wp:docPr id="6" name="Picture 6" descr=""/>
             <wp:cNvGraphicFramePr>
               <a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/>
             </wp:cNvGraphicFramePr>
@@ -2867,19 +2867,19 @@ exports[`008: can inject an image in a shape in the doc footer (regression test 
               <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
                 <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
                   <pic:nvPicPr>
-                    <pic:cNvPr id="0" name="Picture 4" descr=""/>
+                    <pic:cNvPr id="0" name="Picture 6" descr=""/>
                     <pic:cNvPicPr>
                       <a:picLocks noChangeAspect="1" noChangeArrowheads="1"/>
                     </pic:cNvPicPr>
                   </pic:nvPicPr>
                   <pic:blipFill>
-                    <a:blip r:embed="img8" cstate="print">
+                    <a:blip r:embed="img7" cstate="print">
                       <a:extLst>
                         <a:ext uri="{28A0092B-C50C-407E-A947-70E740481C1C}">
                           <a14:useLocalDpi xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main" val="0"/>
                         </a:ext>
                         <a:ext uri="{96DAC541-7B7A-43D3-8B79-37D633B846F1}">
-                          <asvg:svgBlip xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main" r:embed="img4"/>
+                          <asvg:svgBlip xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main" r:embed="img6"/>
                         </a:ext>
                       </a:extLst>
                     </a:blip>
@@ -2939,7 +2939,7 @@ exports[`008: can inject an image in a shape in the doc footer (regression test 
         <w:drawing>
           <wp:inline distT="0" distB="0" distL="0" distR="0">
             <wp:extent cx="2160000" cy="2160000"/>
-            <wp:docPr id="5" name="Picture 5" descr=""/>
+            <wp:docPr id="8" name="Picture 8" descr=""/>
             <wp:cNvGraphicFramePr>
               <a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/>
             </wp:cNvGraphicFramePr>
@@ -2947,7 +2947,7 @@ exports[`008: can inject an image in a shape in the doc footer (regression test 
               <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
                 <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
                   <pic:nvPicPr>
-                    <pic:cNvPr id="0" name="Picture 5" descr=""/>
+                    <pic:cNvPr id="0" name="Picture 8" descr=""/>
                     <pic:cNvPicPr>
                       <a:picLocks noChangeAspect="1" noChangeArrowheads="1"/>
                     </pic:cNvPicPr>
@@ -2959,7 +2959,7 @@ exports[`008: can inject an image in a shape in the doc footer (regression test 
                           <a14:useLocalDpi xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main" val="0"/>
                         </a:ext>
                         <a:ext uri="{96DAC541-7B7A-43D3-8B79-37D633B846F1}">
-                          <asvg:svgBlip xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main" r:embed="img5"/>
+                          <asvg:svgBlip xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main" r:embed="img8"/>
                         </a:ext>
                       </a:extLst>
                     </a:blip>
@@ -3526,6 +3526,416 @@ exports[`011 correctly inserts the optional image caption 1`] = `
     </w:sectPr>
   </w:body>
 </w:document>"
+`;
+
+exports[`012: Sequential vs Concurrent image processing produces identical output for sequential and concurrent processing: document.xml 1`] = `
+"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas" xmlns:cx="http://schemas.microsoft.com/office/drawing/2014/chartex" xmlns:cx1="http://schemas.microsoft.com/office/drawing/2015/9/8/chartex" xmlns:cx2="http://schemas.microsoft.com/office/drawing/2015/10/21/chartex" xmlns:cx3="http://schemas.microsoft.com/office/drawing/2016/5/9/chartex" xmlns:cx4="http://schemas.microsoft.com/office/drawing/2016/5/10/chartex" xmlns:cx5="http://schemas.microsoft.com/office/drawing/2016/5/11/chartex" xmlns:cx6="http://schemas.microsoft.com/office/drawing/2016/5/12/chartex" xmlns:cx7="http://schemas.microsoft.com/office/drawing/2016/5/13/chartex" xmlns:cx8="http://schemas.microsoft.com/office/drawing/2016/5/14/chartex" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:aink="http://schemas.microsoft.com/office/drawing/2016/ink" xmlns:am3d="http://schemas.microsoft.com/office/drawing/2017/model3d" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:oel="http://schemas.microsoft.com/office/2019/extlst" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:w10="urn:schemas-microsoft-com:office:word" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" xmlns:w16cex="http://schemas.microsoft.com/office/word/2018/wordml/cex" xmlns:w16cid="http://schemas.microsoft.com/office/word/2016/wordml/cid" xmlns:w16="http://schemas.microsoft.com/office/word/2018/wordml" xmlns:w16du="http://schemas.microsoft.com/office/word/2023/wordml/word16du" xmlns:w16sdtdh="http://schemas.microsoft.com/office/word/2020/wordml/sdtdatahash" xmlns:w16sdtfl="http://schemas.microsoft.com/office/word/2024/wordml/sdtformatlock" xmlns:w16se="http://schemas.microsoft.com/office/word/2015/wordml/symex" xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" xmlns:wpi="http://schemas.microsoft.com/office/word/2010/wordprocessingInk" xmlns:wne="http://schemas.microsoft.com/office/word/2006/wordml" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" mc:Ignorable="w14 w15 w16se w16cid w16 w16cex w16sdtdh w16sdtfl w16du wp14">
+  <w:body>
+    <w:p w14:paraId="14145127" w14:textId="0F2BAEC8" w:rsidR="007316F8" w:rsidRDefault="007316F8">
+      <w:r>
+        <w:t xml:space="preserve">This is image </w:t>
+        <w:t xml:space="preserve">1</w:t>
+      </w:r>
+    </w:p>
+    <w:p w14:paraId="0BF6CA19" w14:textId="3BE80BE7" w:rsidR="007316F8" w:rsidRDefault="007316F8">
+      <w:proofErr w:type="spellStart"/>
+      <w:r>
+        <w:t xml:space="preserve"></w:t>
+        <w:drawing>
+          <wp:inline distT="0" distB="0" distL="0" distR="0">
+            <wp:extent cx="2160000" cy="2160000"/>
+            <wp:docPr id="1" name="Picture 1" descr=""/>
+            <wp:cNvGraphicFramePr>
+              <a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/>
+            </wp:cNvGraphicFramePr>
+            <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+              <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                  <pic:nvPicPr>
+                    <pic:cNvPr id="0" name="Picture 1" descr=""/>
+                    <pic:cNvPicPr>
+                      <a:picLocks noChangeAspect="1" noChangeArrowheads="1"/>
+                    </pic:cNvPicPr>
+                  </pic:nvPicPr>
+                  <pic:blipFill>
+                    <a:blip r:embed="img1" cstate="print">
+                      <a:extLst>
+                        <a:ext uri="{28A0092B-C50C-407E-A947-70E740481C1C}">
+                          <a14:useLocalDpi xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main" val="0"/>
+                        </a:ext>
+                      </a:extLst>
+                    </a:blip>
+                    <a:srcRect/>
+                    <a:stretch>
+                      <a:fillRect/>
+                    </a:stretch>
+                  </pic:blipFill>
+                  <pic:spPr bwMode="auto">
+                    <a:xfrm>
+                      <a:off x="0" y="0"/>
+                      <a:ext cx="2160000" cy="2160000"/>
+                    </a:xfrm>
+                    <a:prstGeom prst="rect">
+                      <a:avLst/>
+                    </a:prstGeom>
+                    <a:noFill/>
+                    <a:ln>
+                      <a:noFill/>
+                    </a:ln>
+                  </pic:spPr>
+                </pic:pic>
+              </a:graphicData>
+            </a:graphic>
+          </wp:inline>
+        </w:drawing>
+      </w:r>
+      <w:proofErr w:type="spellEnd"/>
+      <w:r>
+        <w:t xml:space="preserve"></w:t>
+      </w:r>
+      <w:proofErr w:type="spellStart"/>
+      <w:r>
+        <w:t xml:space="preserve"></w:t>
+      </w:r>
+      <w:proofErr w:type="spellEnd"/>
+      <w:r>
+        <w:t xml:space="preserve"></w:t>
+      </w:r>
+    </w:p>
+    <w:p w14:paraId="489FD240" w14:textId="5AE30C72" w:rsidR="007316F8" w:rsidRDefault="007316F8">
+      <w:r>
+        <w:br w:type="page"/>
+      </w:r>
+    </w:p>
+    <w:p w14:paraId="5361548B" w14:textId="77777777" w:rsidR="007316F8" w:rsidRDefault="007316F8"/>
+    <w:p w14:paraId="14145127" w14:textId="0F2BAEC8" w:rsidR="007316F8" w:rsidRDefault="007316F8">
+      <w:r>
+        <w:t xml:space="preserve">This is image </w:t>
+        <w:t xml:space="preserve">2</w:t>
+      </w:r>
+    </w:p>
+    <w:p w14:paraId="0BF6CA19" w14:textId="3BE80BE7" w:rsidR="007316F8" w:rsidRDefault="007316F8">
+      <w:proofErr w:type="spellStart"/>
+      <w:r>
+        <w:t xml:space="preserve"></w:t>
+        <w:drawing>
+          <wp:inline distT="0" distB="0" distL="0" distR="0">
+            <wp:extent cx="2160000" cy="2160000"/>
+            <wp:docPr id="2" name="Picture 2" descr=""/>
+            <wp:cNvGraphicFramePr>
+              <a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/>
+            </wp:cNvGraphicFramePr>
+            <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+              <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                  <pic:nvPicPr>
+                    <pic:cNvPr id="0" name="Picture 2" descr=""/>
+                    <pic:cNvPicPr>
+                      <a:picLocks noChangeAspect="1" noChangeArrowheads="1"/>
+                    </pic:cNvPicPr>
+                  </pic:nvPicPr>
+                  <pic:blipFill>
+                    <a:blip r:embed="img2" cstate="print">
+                      <a:extLst>
+                        <a:ext uri="{28A0092B-C50C-407E-A947-70E740481C1C}">
+                          <a14:useLocalDpi xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main" val="0"/>
+                        </a:ext>
+                      </a:extLst>
+                    </a:blip>
+                    <a:srcRect/>
+                    <a:stretch>
+                      <a:fillRect/>
+                    </a:stretch>
+                  </pic:blipFill>
+                  <pic:spPr bwMode="auto">
+                    <a:xfrm>
+                      <a:off x="0" y="0"/>
+                      <a:ext cx="2160000" cy="2160000"/>
+                    </a:xfrm>
+                    <a:prstGeom prst="rect">
+                      <a:avLst/>
+                    </a:prstGeom>
+                    <a:noFill/>
+                    <a:ln>
+                      <a:noFill/>
+                    </a:ln>
+                  </pic:spPr>
+                </pic:pic>
+              </a:graphicData>
+            </a:graphic>
+          </wp:inline>
+        </w:drawing>
+      </w:r>
+      <w:proofErr w:type="spellEnd"/>
+      <w:r>
+        <w:t xml:space="preserve"></w:t>
+      </w:r>
+      <w:proofErr w:type="spellStart"/>
+      <w:r>
+        <w:t xml:space="preserve"></w:t>
+      </w:r>
+      <w:proofErr w:type="spellEnd"/>
+      <w:r>
+        <w:t xml:space="preserve"></w:t>
+      </w:r>
+    </w:p>
+    <w:p w14:paraId="489FD240" w14:textId="5AE30C72" w:rsidR="007316F8" w:rsidRDefault="007316F8">
+      <w:r>
+        <w:br w:type="page"/>
+      </w:r>
+    </w:p>
+    <w:p w14:paraId="5361548B" w14:textId="77777777" w:rsidR="007316F8" w:rsidRDefault="007316F8"/>
+    <w:p w14:paraId="14145127" w14:textId="0F2BAEC8" w:rsidR="007316F8" w:rsidRDefault="007316F8">
+      <w:r>
+        <w:t xml:space="preserve">This is image </w:t>
+        <w:t xml:space="preserve">3</w:t>
+      </w:r>
+    </w:p>
+    <w:p w14:paraId="0BF6CA19" w14:textId="3BE80BE7" w:rsidR="007316F8" w:rsidRDefault="007316F8">
+      <w:proofErr w:type="spellStart"/>
+      <w:r>
+        <w:t xml:space="preserve"></w:t>
+        <w:drawing>
+          <wp:inline distT="0" distB="0" distL="0" distR="0">
+            <wp:extent cx="2160000" cy="2160000"/>
+            <wp:docPr id="3" name="Picture 3" descr=""/>
+            <wp:cNvGraphicFramePr>
+              <a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/>
+            </wp:cNvGraphicFramePr>
+            <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+              <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                  <pic:nvPicPr>
+                    <pic:cNvPr id="0" name="Picture 3" descr=""/>
+                    <pic:cNvPicPr>
+                      <a:picLocks noChangeAspect="1" noChangeArrowheads="1"/>
+                    </pic:cNvPicPr>
+                  </pic:nvPicPr>
+                  <pic:blipFill>
+                    <a:blip r:embed="img3" cstate="print">
+                      <a:extLst>
+                        <a:ext uri="{28A0092B-C50C-407E-A947-70E740481C1C}">
+                          <a14:useLocalDpi xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main" val="0"/>
+                        </a:ext>
+                      </a:extLst>
+                    </a:blip>
+                    <a:srcRect/>
+                    <a:stretch>
+                      <a:fillRect/>
+                    </a:stretch>
+                  </pic:blipFill>
+                  <pic:spPr bwMode="auto">
+                    <a:xfrm>
+                      <a:off x="0" y="0"/>
+                      <a:ext cx="2160000" cy="2160000"/>
+                    </a:xfrm>
+                    <a:prstGeom prst="rect">
+                      <a:avLst/>
+                    </a:prstGeom>
+                    <a:noFill/>
+                    <a:ln>
+                      <a:noFill/>
+                    </a:ln>
+                  </pic:spPr>
+                </pic:pic>
+              </a:graphicData>
+            </a:graphic>
+          </wp:inline>
+        </w:drawing>
+      </w:r>
+      <w:proofErr w:type="spellEnd"/>
+      <w:r>
+        <w:t xml:space="preserve"></w:t>
+      </w:r>
+      <w:proofErr w:type="spellStart"/>
+      <w:r>
+        <w:t xml:space="preserve"></w:t>
+      </w:r>
+      <w:proofErr w:type="spellEnd"/>
+      <w:r>
+        <w:t xml:space="preserve"></w:t>
+      </w:r>
+    </w:p>
+    <w:p w14:paraId="489FD240" w14:textId="5AE30C72" w:rsidR="007316F8" w:rsidRDefault="007316F8">
+      <w:r>
+        <w:br w:type="page"/>
+      </w:r>
+    </w:p>
+    <w:p w14:paraId="5361548B" w14:textId="77777777" w:rsidR="007316F8" w:rsidRDefault="007316F8"/>
+    <w:p w14:paraId="14145127" w14:textId="0F2BAEC8" w:rsidR="007316F8" w:rsidRDefault="007316F8">
+      <w:r>
+        <w:t xml:space="preserve">This is image </w:t>
+        <w:t xml:space="preserve">4</w:t>
+      </w:r>
+    </w:p>
+    <w:p w14:paraId="0BF6CA19" w14:textId="3BE80BE7" w:rsidR="007316F8" w:rsidRDefault="007316F8">
+      <w:proofErr w:type="spellStart"/>
+      <w:r>
+        <w:t xml:space="preserve"></w:t>
+        <w:drawing>
+          <wp:inline distT="0" distB="0" distL="0" distR="0">
+            <wp:extent cx="2160000" cy="2160000"/>
+            <wp:docPr id="4" name="Picture 4" descr=""/>
+            <wp:cNvGraphicFramePr>
+              <a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/>
+            </wp:cNvGraphicFramePr>
+            <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+              <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                  <pic:nvPicPr>
+                    <pic:cNvPr id="0" name="Picture 4" descr=""/>
+                    <pic:cNvPicPr>
+                      <a:picLocks noChangeAspect="1" noChangeArrowheads="1"/>
+                    </pic:cNvPicPr>
+                  </pic:nvPicPr>
+                  <pic:blipFill>
+                    <a:blip r:embed="img4" cstate="print">
+                      <a:extLst>
+                        <a:ext uri="{28A0092B-C50C-407E-A947-70E740481C1C}">
+                          <a14:useLocalDpi xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main" val="0"/>
+                        </a:ext>
+                      </a:extLst>
+                    </a:blip>
+                    <a:srcRect/>
+                    <a:stretch>
+                      <a:fillRect/>
+                    </a:stretch>
+                  </pic:blipFill>
+                  <pic:spPr bwMode="auto">
+                    <a:xfrm>
+                      <a:off x="0" y="0"/>
+                      <a:ext cx="2160000" cy="2160000"/>
+                    </a:xfrm>
+                    <a:prstGeom prst="rect">
+                      <a:avLst/>
+                    </a:prstGeom>
+                    <a:noFill/>
+                    <a:ln>
+                      <a:noFill/>
+                    </a:ln>
+                  </pic:spPr>
+                </pic:pic>
+              </a:graphicData>
+            </a:graphic>
+          </wp:inline>
+        </w:drawing>
+      </w:r>
+      <w:proofErr w:type="spellEnd"/>
+      <w:r>
+        <w:t xml:space="preserve"></w:t>
+      </w:r>
+      <w:proofErr w:type="spellStart"/>
+      <w:r>
+        <w:t xml:space="preserve"></w:t>
+      </w:r>
+      <w:proofErr w:type="spellEnd"/>
+      <w:r>
+        <w:t xml:space="preserve"></w:t>
+      </w:r>
+    </w:p>
+    <w:p w14:paraId="489FD240" w14:textId="5AE30C72" w:rsidR="007316F8" w:rsidRDefault="007316F8">
+      <w:r>
+        <w:br w:type="page"/>
+      </w:r>
+    </w:p>
+    <w:p w14:paraId="5361548B" w14:textId="77777777" w:rsidR="007316F8" w:rsidRDefault="007316F8"/>
+    <w:p w14:paraId="14145127" w14:textId="0F2BAEC8" w:rsidR="007316F8" w:rsidRDefault="007316F8">
+      <w:r>
+        <w:t xml:space="preserve">This is image </w:t>
+        <w:t xml:space="preserve">5</w:t>
+      </w:r>
+    </w:p>
+    <w:p w14:paraId="0BF6CA19" w14:textId="3BE80BE7" w:rsidR="007316F8" w:rsidRDefault="007316F8">
+      <w:proofErr w:type="spellStart"/>
+      <w:r>
+        <w:t xml:space="preserve"></w:t>
+        <w:drawing>
+          <wp:inline distT="0" distB="0" distL="0" distR="0">
+            <wp:extent cx="2160000" cy="2160000"/>
+            <wp:docPr id="5" name="Picture 5" descr=""/>
+            <wp:cNvGraphicFramePr>
+              <a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/>
+            </wp:cNvGraphicFramePr>
+            <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+              <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                  <pic:nvPicPr>
+                    <pic:cNvPr id="0" name="Picture 5" descr=""/>
+                    <pic:cNvPicPr>
+                      <a:picLocks noChangeAspect="1" noChangeArrowheads="1"/>
+                    </pic:cNvPicPr>
+                  </pic:nvPicPr>
+                  <pic:blipFill>
+                    <a:blip r:embed="img5" cstate="print">
+                      <a:extLst>
+                        <a:ext uri="{28A0092B-C50C-407E-A947-70E740481C1C}">
+                          <a14:useLocalDpi xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main" val="0"/>
+                        </a:ext>
+                      </a:extLst>
+                    </a:blip>
+                    <a:srcRect/>
+                    <a:stretch>
+                      <a:fillRect/>
+                    </a:stretch>
+                  </pic:blipFill>
+                  <pic:spPr bwMode="auto">
+                    <a:xfrm>
+                      <a:off x="0" y="0"/>
+                      <a:ext cx="2160000" cy="2160000"/>
+                    </a:xfrm>
+                    <a:prstGeom prst="rect">
+                      <a:avLst/>
+                    </a:prstGeom>
+                    <a:noFill/>
+                    <a:ln>
+                      <a:noFill/>
+                    </a:ln>
+                  </pic:spPr>
+                </pic:pic>
+              </a:graphicData>
+            </a:graphic>
+          </wp:inline>
+        </w:drawing>
+      </w:r>
+      <w:proofErr w:type="spellEnd"/>
+      <w:r>
+        <w:t xml:space="preserve"></w:t>
+      </w:r>
+      <w:proofErr w:type="spellStart"/>
+      <w:r>
+        <w:t xml:space="preserve"></w:t>
+      </w:r>
+      <w:proofErr w:type="spellEnd"/>
+      <w:r>
+        <w:t xml:space="preserve"></w:t>
+      </w:r>
+    </w:p>
+    <w:p w14:paraId="489FD240" w14:textId="5AE30C72" w:rsidR="007316F8" w:rsidRDefault="007316F8">
+      <w:r>
+        <w:br w:type="page"/>
+      </w:r>
+    </w:p>
+    <w:p w14:paraId="5361548B" w14:textId="77777777" w:rsidR="007316F8" w:rsidRDefault="007316F8"/>
+    <w:sectPr w:rsidR="007316F8">
+      <w:pgSz w:w="12240" w:h="15840"/>
+      <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>
+      <w:cols w:space="720"/>
+      <w:docGrid w:linePitch="360"/>
+    </w:sectPr>
+  </w:body>
+</w:document>"
+`;
+
+exports[`012: Sequential vs Concurrent image processing produces identical output for sequential and concurrent processing: media-files 1`] = `
+[
+  "word/media/",
+  "word/media/template_document.xml_img1.png",
+  "word/media/template_document.xml_img2.png",
+  "word/media/template_document.xml_img3.png",
+  "word/media/template_document.xml_img4.png",
+  "word/media/template_document.xml_img5.png",
+]
 `;
 
 exports[`can inject image in document that already contained image with same extension but uppercase 1`] = `
