@@ -510,28 +510,26 @@ describe('012: Sequential vs Concurrent image processing', () => {
   const IMAGE_COUNT = 20;
   const IMAGE_DELAY_MS = 100;
 
-  let cachedCubeData: { width: number; height: number; data: Buffer } | null =
-    null;
+  type ImageData = { width: number; height: number; data: Buffer };
+  const imageCache: Map<string, ImageData> = new Map();
 
-  async function loadCubeImage(): Promise<{
-    width: number;
-    height: number;
-    data: Buffer;
-  }> {
-    if (cachedCubeData) return cachedCubeData;
+  async function loadBaseImage(filename: string): Promise<ImageData> {
+    const cached = imageCache.get(filename);
+    if (cached) return cached;
 
-    const cubePath = path.join(__dirname, 'fixtures', 'cube.png');
-    const cubeBuffer = await fs.promises.readFile(cubePath);
+    const imagePath = path.join(__dirname, 'fixtures', filename);
+    const imageBuffer = await fs.promises.readFile(imagePath);
 
     return new Promise((resolve, reject) => {
-      new PNG().parse(cubeBuffer, (err, png) => {
+      new PNG().parse(imageBuffer, (err, png) => {
         if (err) return reject(err);
-        cachedCubeData = {
+        const imageData: ImageData = {
           width: png.width,
           height: png.height,
           data: Buffer.from(png.data),
         };
-        resolve(cachedCubeData);
+        imageCache.set(filename, imageData);
+        resolve(imageData);
       });
     });
   }
@@ -571,14 +569,18 @@ describe('012: Sequential vs Concurrent image processing', () => {
     ];
   }
 
-  async function createUniqueImage(
+  async function createVariantImage(
     index: number,
-    totalImages: number
+    totalImages: number,
+    baseFilename: string = 'cube.png'
   ): Promise<Buffer> {
-    const cubeData = await loadCubeImage();
+    const baseImageData = await loadBaseImage(baseFilename);
 
-    const png = new PNG({ width: cubeData.width, height: cubeData.height });
-    cubeData.data.copy(png.data);
+    const png = new PNG({
+      width: baseImageData.width,
+      height: baseImageData.height,
+    });
+    baseImageData.data.copy(png.data);
 
     const hue = (index * 360) / totalImages;
     const saturation = 0.7 + (index % 3) * 0.1;
@@ -607,14 +609,19 @@ describe('012: Sequential vs Concurrent image processing', () => {
       path.join(__dirname, 'fixtures', 'stress_test_template.docx')
     );
 
-    await loadCubeImage();
+    const baseFilename = 'cube.png';
+    await loadBaseImage(baseFilename);
 
     const images = Array.from({ length: IMAGE_COUNT }, (_, i) => i);
     const data = { images };
 
     const createGetImageFn = () => async (index: number) => {
       await new Promise(resolve => setTimeout(resolve, IMAGE_DELAY_MS));
-      const imageBuffer = await createUniqueImage(index, IMAGE_COUNT);
+      const imageBuffer = await createVariantImage(
+        index,
+        IMAGE_COUNT,
+        baseFilename
+      );
       return {
         width: 6,
         height: 6,
@@ -631,7 +638,7 @@ describe('012: Sequential vs Concurrent image processing', () => {
       cmdDelimiter: ['{{', '}}'],
     });
 
-    // Concurrent execution
+    // Concurrent execution (imageConcurrency: 5 means process 5 at a time)
     const concurrentReport = await createReport({
       template,
       data,
@@ -676,21 +683,26 @@ describe('012: Sequential vs Concurrent image processing', () => {
 
     // Snapshot the media files structure
     expect(sequentialMediaFiles.sort()).toMatchSnapshot('media-files');
-  });
+  }, 120000);
 
   it('concurrent processing is faster than sequential', async () => {
     const template = await fs.promises.readFile(
       path.join(__dirname, 'fixtures', 'stress_test_template.docx')
     );
 
-    await loadCubeImage();
+    const baseFilename = 'cube.png';
+    await loadBaseImage(baseFilename);
 
     const images = Array.from({ length: IMAGE_COUNT }, (_, i) => i);
     const data = { images };
 
     const createGetImageFn = () => async (index: number) => {
       await new Promise(resolve => setTimeout(resolve, IMAGE_DELAY_MS));
-      const imageBuffer = await createUniqueImage(index, IMAGE_COUNT);
+      const imageBuffer = await createVariantImage(
+        index,
+        IMAGE_COUNT,
+        baseFilename
+      );
       return {
         width: 6,
         height: 6,
@@ -709,7 +721,7 @@ describe('012: Sequential vs Concurrent image processing', () => {
     });
     const sequentialTime = Date.now() - sequentialStart;
 
-    // Concurrent execution
+    // Concurrent execution (imageConcurrency: 5 means process 5 at a time)
     const concurrentStart = Date.now();
     await createReport({
       template,
@@ -720,7 +732,7 @@ describe('012: Sequential vs Concurrent image processing', () => {
     });
     const concurrentTime = Date.now() - concurrentStart;
 
-    // Concurrent should be faster
+    // Concurrent should be faster than sequential
     expect(concurrentTime).toBeLessThan(sequentialTime);
-  });
+  }, 60000);
 });
