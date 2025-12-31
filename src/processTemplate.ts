@@ -313,7 +313,7 @@ export async function walkTemplate(
         (tag === 'w:p' ||
           tag === 'w:tbl' ||
           tag === 'w:tr' ||
-          tag === 'w:tc') &&
+          (tag === 'w:tc' && isInTableCellLoop(ctx))) &&
         isLoopExploring(ctx)
       ) {
         fRemoveNode = true;
