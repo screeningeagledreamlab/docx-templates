@@ -1368,6 +1368,15 @@ Morbi dignissim consequat ex, non finibus est faucibus sodales. Integer sed just
           },
           'XML'
         );
+
+        const result2 = await createReport({
+          noSandbox,
+          template,
+          data: {
+            columns: ['Column 1', 'Column 2', 'Column 3'],
+          },
+        });
+        fs.writeFileSync('./output.docx', result2);
         expect(result).toMatchSnapshot();
       });
 
@@ -1390,6 +1399,78 @@ Morbi dignissim consequat ex, non finibus est faucibus sodales. Integer sed just
           },
           'XML'
         );
+        expect(result).toMatchSnapshot();
+      });
+
+      it('IF-in-table: preserves cell when left IF evaluates to false (regression test for v4.12.0 bug)', async () => {
+        const template = await fs.promises.readFile(
+          path.join(__dirname, 'fixtures', 'IF-in-table.docx')
+        );
+        const result = await createReport(
+          {
+            noSandbox,
+            template,
+            data: {
+              // leftCol is missing (falsy), rightCol has value (truthy)
+              v: [{ rightCol: 'value' }],
+            },
+            cmdDelimiter: ['{{', '}}'],
+            additionalJsContext: {
+              T: (key: string) => key,
+            },
+          },
+          'XML'
+        );
+        // The key assertion: table cells should be preserved even when
+        // the IF condition in one cell evaluates to false. This was broken
+        // in v4.12.0 where the w:tc element was incorrectly removed.
+        // We verify this by checking the output matches our snapshot which
+        // includes all expected cells.
+        expect(result).toMatchSnapshot();
+      });
+
+      it('IF-in-table: preserves cell when right IF evaluates to false', async () => {
+        const template = await fs.promises.readFile(
+          path.join(__dirname, 'fixtures', 'IF-in-table.docx')
+        );
+        const result = await createReport(
+          {
+            noSandbox,
+            template,
+            data: {
+              // leftCol has value (truthy), rightCol is missing (falsy)
+              v: [{ leftCol: 'value' }],
+            },
+            cmdDelimiter: ['{{', '}}'],
+            additionalJsContext: {
+              T: (key: string) => key,
+            },
+          },
+          'XML'
+        );
+        // Both cells should still exist - verified via snapshot
+        expect(result).toMatchSnapshot();
+      });
+
+      it('IF-in-table: preserves cells when both IF conditions are true', async () => {
+        const template = await fs.promises.readFile(
+          path.join(__dirname, 'fixtures', 'IF-in-table.docx')
+        );
+        const result = await createReport(
+          {
+            noSandbox,
+            template,
+            data: {
+              v: [{ leftCol: 'left', rightCol: 'right' }],
+            },
+            cmdDelimiter: ['{{', '}}'],
+            additionalJsContext: {
+              T: (key: string) => key,
+            },
+          },
+          'XML'
+        );
+        // Both cells should exist with content - verified via snapshot
         expect(result).toMatchSnapshot();
       });
     });
