@@ -225,6 +225,10 @@ export type Context = {
 
   // For parallel image downloads
   pendingImageDownloads: PendingImageDownload[];
+
+  // Flag set when a table cell loop just ended, allowing cleanup of empty cells
+  // even after the loop has been popped from the stack
+  tableCellLoopJustEnded?: boolean;
 };
 
 // Represents a pending image download that will be resolved later
@@ -276,6 +280,12 @@ export type LoopStatus = {
   loopOver: Array<VarValue>;
   idx: number;
   isIf?: boolean;
+  /**
+   * True if this FOR loop started inside a table cell (w:tc),
+   * meaning it may be generating dynamic columns.
+   * When true, empty table cells can be removed after the loop.
+   */
+  isTableCellLoop?: boolean;
 };
 
 export type ImagePars = {
