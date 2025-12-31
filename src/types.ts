@@ -204,6 +204,10 @@ export type Context = {
   // To verfiy we don't have a nested if within the same p or tr tag
   pIfCheckMap: Map<Node, string>;
   trIfCheckMap: Map<Node, string>;
+
+  // Flag set when a table cell loop just ended, allowing cleanup of empty cells
+  // even after the loop has been popped from the stack
+  tableCellLoopJustEnded?: boolean;
 };
 
 export type Images = { [id: string]: Image };
@@ -237,6 +241,12 @@ export type LoopStatus = {
   loopOver: Array<VarValue>;
   idx: number;
   isIf?: boolean;
+  /**
+   * True if this FOR loop started inside a table cell (w:tc),
+   * meaning it may be generating dynamic columns.
+   * When true, empty table cells can be removed after the loop.
+   */
+  isTableCellLoop?: boolean;
 };
 
 export type ImagePars = {
