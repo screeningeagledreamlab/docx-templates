@@ -208,6 +208,7 @@ export type Context = {
     pIfCheckMap: Map<Node, string>;
     trIfCheckMap: Map<Node, string>;
     pendingImageDownloads: PendingImageDownload[];
+    tableCellLoopJustEnded?: boolean;
 };
 export type PendingImageDownload = {
     id: string;
@@ -254,6 +255,12 @@ export type LoopStatus = {
     loopOver: Array<VarValue>;
     idx: number;
     isIf?: boolean;
+    /**
+     * True if this FOR loop started inside a table cell (w:tc),
+     * meaning it may be generating dynamic columns.
+     * When true, empty table cells can be removed after the loop.
+     */
+    isTableCellLoop?: boolean;
 };
 export type ImagePars = {
     /**
