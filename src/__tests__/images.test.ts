@@ -507,7 +507,7 @@ it('can inject image in document that already contained image with same extensio
 });
 
 describe('012: Sequential vs Concurrent image processing', () => {
-  const IMAGE_COUNT = 20;
+  const IMAGE_COUNT = 40;
   const IMAGE_DELAY_MS = 100;
 
   type ImageData = { width: number; height: number; data: Buffer };
