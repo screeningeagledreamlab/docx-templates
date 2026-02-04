@@ -16,6 +16,5 @@
     "exclude": [
         "src/browser-polyfill.ts",
         "src/browser.ts",
-        "src/__tests__"
     ]
 }
