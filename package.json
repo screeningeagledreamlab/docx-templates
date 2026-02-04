@@ -1,10 +1,16 @@
 {
-  "name": "docx-templates",
-  "version": "4.15.0",
-  "description": "Template-based docx report creation",
+  "name": "@screeningeagledreamlab/docx-templates",
+  "version": "1.0.0",
+  "description": "Template-based docx report creation (fork of guigrpa/docx-templates)",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
-  "author": "Guillermo Grau Panea",
+  "author": "Screening Eagle",
+  "contributors": [
+    {
+      "name": "Suchira Dharmawardhana",
+      "url": "https://github.com/SuchiraD"
+    }
+  ],
   "license": "MIT",
   "keywords": [
     "docx",
@@ -14,13 +20,13 @@
     "report",
     "template"
   ],
-  "homepage": "https://github.com/guigrpa/docx-templates#readme",
+  "homepage": "https://github.com/screeningeagledreamlab/docx-templates#readme",
   "bugs": {
-    "url": "https://github.com/guigrpa/docx-templates/issues"
+    "url": "https://github.com/screeningeagledreamlab/docx-templates/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/guigrpa/docx-templates.git"
+    "url": "git+https://github.com/screeningeagledreamlab/docx-templates.git"
   },
   "scripts": {
     "prepare": "yarn compile",
