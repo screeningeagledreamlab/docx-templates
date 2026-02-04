@@ -183,7 +183,7 @@ exports[`noSandbox custom ErrorHandler properly handles nested InvalidCommandErr
 ]
 `;
 
-exports[`noSandbox rejectNullish setting IMAGE 1`] = `"Result of command qr(\`some random string\`) is null or undefined and rejectNullish is set"`;
+exports[`noSandbox rejectNullish setting IMAGE 1`] = `"Error executing command 'IMAGE qr(\`some random string\`)': Error: Result of command qr(\`some random string\`) is null or undefined and rejectNullish is set"`;
 
 exports[`sandbox custom ErrorHandler allows graceful handling of NullishCommandResultError 1`] = `
 "<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -356,7 +356,7 @@ exports[`sandbox custom ErrorHandler properly handles nested InvalidCommandError
 ]
 `;
 
-exports[`sandbox rejectNullish setting IMAGE 1`] = `"Result of command qr(\`some random string\`) is null or undefined and rejectNullish is set"`;
+exports[`sandbox rejectNullish setting IMAGE 1`] = `"Error executing command 'IMAGE qr(\`some random string\`)': Error: Result of command qr(\`some random string\`) is null or undefined and rejectNullish is set"`;
 
 exports[`throw when result of INS command is an object 1`] = `"Result of command 'companies' is an object"`;
 

@@ -153,6 +153,14 @@ export type UserOptions = {
    * (Default: false)
    */
   allowNestedIf?: boolean;
+  /**
+   * Maximum number of concurrent image downloads.
+   * When set, enables parallel image processing mode where all IMAGE commands
+   * are collected during template walking and resolved in parallel at the end.
+   * When not set (default), images are processed inline during template walking.
+   * Parallel mode is useful for templates with many images that do processings. eg: fetch from URLs, rotating.
+   */
+  imageConcurrency?: number;
 };
 
 export type CreateReportOptions = {
@@ -172,6 +180,7 @@ export type CreateReportOptions = {
   preserveSpace: boolean;
   compressionLevel: number;
   allowNestedIf: boolean;
+  imageConcurrency: number;
 };
 
 export type SandBox = {
@@ -217,6 +226,27 @@ export type Context = {
   // Flag set when a table cell loop just ended, allowing cleanup of empty cells
   // even after the loop has been popped from the stack
   tableCellLoopJustEnded?: boolean;
+
+  // For parallel image downloads
+  pendingImageDownloads: PendingImageDownload[];
+};
+
+// Represents a pending image download that will be resolved later
+export type PendingImageDownload = {
+  id: string; // The image relId (e.g., 'img1')
+  // Function that starts the download - called with concurrency control
+  fetchImage: () => Promise<ImagePars | undefined>;
+  cmd: string; // Original command for error reporting
+  // References to XML nodes that need dimension updates after resolution
+  extentNode?: NonTextNode; // wp:extent node
+  picExtNode?: NonTextNode; // a:ext node inside pic:spPr
+  xfrmNode?: NonTextNode; // a:xfrm node for rotation
+  blipNode?: NonTextNode; // a:blip node for SVG handling
+  extLstNode?: NonTextNode; // a:extLst node for SVG extension
+  docPrNode?: NonTextNode; // wp:docPr node for alt text
+  cNvPrNode?: NonTextNode; // pic:cNvPr node for alt text
+  drawingNode?: NonTextNode; // w:drawing node for caption handling
+  captionParent?: Node; // Parent node where caption should be added
 };
 
 export type Images = { [id: string]: Image };
