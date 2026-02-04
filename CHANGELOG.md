@@ -1,3 +1,27 @@
+# @screeningeagledreamlab/docx-templates Changelog
+
+> **Note:** This is a fork of [guigrpa/docx-templates](https://github.com/guigrpa/docx-templates). Fork-specific changes are listed below, followed by the original changelog.
+
+---
+
+## 1.0.0 (2025-02-04) - Fork Release
+
+**Forked from [guigrpa/docx-templates](https://github.com/guigrpa/docx-templates) v4.15.0**
+
+### New Features
+* [PR #1](https://github.com/screeningeagledreamlab/docx-templates/pull/1): Added `allowNestedIf` option to allow nested IF commands within the same paragraph or table row. Disabled by default for backwards compatibility.
+* [PR #3](https://github.com/screeningeagledreamlab/docx-templates/pull/3): Implemented asynchronous image downloading to significantly speed up report generation when templates contain multiple images.
+
+### Bug Fixes
+* [PR #4](https://github.com/screeningeagledreamlab/docx-templates/pull/4): Fixed regression from v4.12.0 where columns containing only conditions and commands were incorrectly removed when the condition evaluated to false.
+
+### Performance Improvements
+* Memory optimizations with sequential image processing as the default behavior, reducing memory usage for large documents.
+
+---
+
+# Original Changelog (guigrpa/docx-templates)
+
 ## 4.15.0 (2025-12-03)
 * [#432](https://github.com/guigrpa/docx-templates/pull/432): add `indentXml`, `preserveSpace` and `compressionLevel` options to let users trade readability for smaller file size when generating reports.
 * [#426](https://github.com/guigrpa/docx-templates/pull/426): allow `IMAGE` commands to emit empty Alt Text values instead of forcing the placeholder `"desc"`.
