@@ -1,6 +1,28 @@
-# Docx-templates [![Coverage Status](https://coveralls.io/repos/github/guigrpa/docx-templates/badge.svg?branch=master)](https://coveralls.io/github/guigrpa/docx-templates?branch=master) [![npm version](https://img.shields.io/npm/v/docx-templates.svg)](https://www.npmjs.com/package/docx-templates)
+# @screeningeagledreamlab/docx-templates
 
-Template-based docx report creation for both Node and the browser. ([See the blog post](http://guigrpa.github.io/2017/01/01/word-docs-the-relay-way/)).
+Template-based docx report creation for both Node and the browser.
+
+> **Note:** This is a fork of [guigrpa/docx-templates](https://github.com/guigrpa/docx-templates) with additional features and fixes. See [Fork Changes](#fork-changes) below.
+
+## Fork Changes
+
+This fork includes the following enhancements over the original library:
+
+### New Features
+- **Asynchronous image downloading** - Images are now downloaded concurrently, significantly speeding up report generation when templates contain multiple images
+- **`allowNestedIf` option** - New configuration option that allows nested IF commands within the same paragraph or table row (disabled by default for backwards compatibility)
+
+### Bug Fixes
+- **Table column removal fix** - Fixed a regression where columns containing only conditions and commands were incorrectly removed when the condition evaluated to false
+
+### Performance Improvements
+- **Memory optimizations** - Sequential image processing is the default behavior, reducing memory usage for large documents
+
+---
+
+*Original README content follows:*
+
+---
 
 
 ## Why?
@@ -54,13 +76,13 @@ Contributions are welcome!
 # Installation
 
 ```
-$ npm install docx-templates
+$ npm install @screeningeagledreamlab/docx-templates
 ```
 
 ...or using yarn:
 
 ```
-$ yarn add docx-templates
+$ yarn add @screeningeagledreamlab/docx-templates
 ```
 
 
@@ -69,7 +91,7 @@ $ yarn add docx-templates
 Here is a simple example, with report data injected directly as an object:
 
 ```js
-import createReport from 'docx-templates';
+import createReport from '@screeningeagledreamlab/docx-templates';
 import fs from 'fs';
 
 const template = fs.readFileSync('myTemplate.docx');
@@ -203,7 +225,7 @@ Or if the user provides the template you can get a `File` object with:
 Then read this file in an ArrayBuffer, feed it to docx-templates, and download the result:
 
 ```js
-import createReport from 'docx-templates';
+import createReport from '@screeningeagledreamlab/docx-templates';
 
 const onTemplateChosen = async () => {
   const template = await readFileIntoArrayBuffer(myFile);
@@ -676,7 +698,7 @@ Using a custom `errorHandler` in combination with `rejectNullish = true` allows 
 The `listCommands` function lets you list all the commands in a docx template using the same parser as `createReport`.
 
 ```typescript
-import { listCommands } from 'docx-templates';
+import { listCommands } from '@screeningeagledreamlab/docx-templates';
 const template_buffer = fs.readFileSync('template.docx');
 const commands = await listCommands(template_buffer, ['{', '}']);
 
@@ -692,7 +714,7 @@ The `getMetadata` function lets you extract the metadata fields from a document,
 - These metadata fields, including the number of pages, are only updated by MS Word (or LibreOffice) when saving the document. Docx-templates does not alter these metadata fields, so the number of pages may not reflect the actual size of your rendered document (see issue [#240](https://github.com/guigrpa/docx-templates/issues/240)). Docx-templates can not reliably determine the number of pages in a document, as this requires a full-fledged docx renderer (e.g. MS Word).
 
 ```typescript
-    import { getMetadata } from 'docx-templates';
+    import { getMetadata } from '@screeningeagledreamlab/docx-templates';
     const template = fs.readFileSync('template.docx');
     await getMetadata(template)
     // result:
