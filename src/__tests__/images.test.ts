@@ -736,3 +736,101 @@ describe('012: Sequential vs Concurrent image processing', () => {
     expect(concurrentTime).toBeLessThan(sequentialTime);
   }, 60000);
 });
+
+// ============================================================
+// Bug reproduction: parallel IMAGE mode does not capture sandbox state
+// See docs/bugs/parallel-images/01-sandbox-state-bug.md
+// ============================================================
+describe('parallel image sandbox state bug', () => {
+  // Template structure:
+  //   {{! itemsLength = $items.length;}}
+  //   {{FOR row in $rows}}
+  //     {{! startingIndex = $row * 2;}}
+  //     {{IF startingIndex < itemsLength}}
+  //       {{IMAGE getImage($items[startingIndex])}}
+  //     {{END-IF}}
+  //     {{IF startingIndex + 1 < itemsLength}}
+  //       {{IMAGE getImage($items[startingIndex + 1])}}
+  //     {{END-IF}}
+  //   {{END-FOR row}}
+  //
+  // Data: 5 items, 2 per row = 3 rows (row 0: items 0,1; row 1: items 2,3; row 2: item 4)
+  //
+  // BUG: In parallel mode, all deferred IMAGE closures see startingIndex=4
+  // (from the last FOR iteration), so row 0 tries to access items[4] and items[5]
+  // instead of items[0] and items[1]. items[5] is undefined -> crash.
+
+  const samplePng = fs.readFileSync(
+    path.join(__dirname, 'fixtures', 'sample.png')
+  );
+
+  const items = ['apple', 'banana', 'cherry', 'date', 'elderberry'];
+  const rows = [0, 1, 2]; // 3 rows, 2 items per row
+
+  // Track which item names were requested, to verify correct resolution order
+  let requestedItems: string[];
+
+  const getImage = (itemName: string) => {
+    requestedItems.push(itemName);
+    return {
+      width: 2,
+      height: 2,
+      data: samplePng,
+      extension: '.png' as const,
+    };
+  };
+
+  let template: Buffer;
+  beforeAll(async () => {
+    template = await fs.promises.readFile(
+      path.join(__dirname, 'fixtures', 'sandbox_loop_image_template.docx')
+    );
+  });
+
+  beforeEach(() => {
+    requestedItems = [];
+  });
+
+  it('inline mode resolves images with correct per-iteration sandbox state', async () => {
+    // Inline mode (no imageConcurrency) - this works correctly as the baseline
+    await createReport({
+      template,
+      data: { items, rows },
+      additionalJsContext: { getImage },
+      cmdDelimiter: ['{{', '}}'],
+    });
+
+    // Each IMAGE should have been called with the correct item for its iteration
+    expect(requestedItems).toEqual([
+      'apple',       // row 0: startingIndex=0, items[0]
+      'banana',      // row 0: startingIndex=0, items[1]
+      'cherry',      // row 1: startingIndex=2, items[2]
+      'date',        // row 1: startingIndex=2, items[3]
+      'elderberry',  // row 2: startingIndex=4, items[4]
+    ]);
+  });
+
+  it('parallel mode should resolve images with correct per-iteration sandbox state', async () => {
+    // BUG: all closures see startingIndex=4 (last iteration), producing:
+    //   ["elderberry", undefined, "elderberry", undefined, "elderberry"]
+    // instead of the correct per-iteration values.
+    // The undefined values are items[4+1] = items[5] which is out of bounds.
+    await createReport({
+      template,
+      data: { items, rows },
+      additionalJsContext: { getImage },
+      cmdDelimiter: ['{{', '}}'],
+      imageConcurrency: 5,
+    });
+
+    // Same expected order as inline mode - each IMAGE should see its own
+    // iteration's startingIndex, not the last iteration's value
+    expect(requestedItems).toEqual([
+      'apple',       // row 0: startingIndex=0, items[0]
+      'banana',      // row 0: startingIndex=0, items[1]
+      'cherry',      // row 1: startingIndex=2, items[2]
+      'date',        // row 1: startingIndex=2, items[3]
+      'elderberry',  // row 2: startingIndex=4, items[4]
+    ]);
+  });
+});
