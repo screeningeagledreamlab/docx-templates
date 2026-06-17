@@ -803,18 +803,19 @@ describe('parallel image sandbox state bug', () => {
     expect(report).toBeInstanceOf(Uint8Array);
   });
 
-  it('parallel mode fails due to stale sandbox state in deferred IMAGE closures', async () => {
-    // BUG: All deferred closures see startingIndex=4 (last iteration).
-    // Row 0's closure evaluates items[4+1].name -> items[5] is undefined
-    // -> TypeError: Cannot read properties of undefined (reading 'name')
-    await expect(
-      createReport({
-        template,
-        data: { items, rows },
-        additionalJsContext: { getImage },
-        cmdDelimiter: ['{{', '}}'],
-        imageConcurrency: 5,
-      })
-    ).rejects.toThrow(/Cannot read properties of undefined/);
+  it('parallel mode resolves images with correct per-iteration sandbox state', async () => {
+    // Previously this crashed with:
+    //   TypeError: Cannot read properties of undefined (reading 'name')
+    // because all deferred closures saw startingIndex=4 (last iteration).
+    // With the sandbox override fix, each closure uses its captured sandbox snapshot.
+    const report = await createReport({
+      template,
+      data: { items, rows },
+      additionalJsContext: { getImage },
+      cmdDelimiter: ['{{', '}}'],
+      imageConcurrency: 5,
+    });
+
+    expect(report).toBeInstanceOf(Uint8Array);
   });
 });

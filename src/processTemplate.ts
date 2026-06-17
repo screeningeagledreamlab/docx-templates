@@ -24,6 +24,7 @@ import {
   ImageExtensions,
   NonTextNode,
   PendingImageDownload,
+  SandBox,
 } from './types';
 import {
   isError,
@@ -760,10 +761,12 @@ const processCmd: CommandProcessor = async (
           // Build placeholder XML structure with node references for later updates
           const pendingDownload = buildPendingImageNode(ctx, relId, id, cmd);
 
-          // MEMORY OPTIMIZATION: We capture loop state but NOT the data object.
-          // - `data` is immutable during template processing, so we reference it directly
-          // - `ctx.vars` contains loop variables that change per iteration, so we snapshot them
-          // - Only clone vars when inside a loop (ctx.loops.length > 0) to avoid unnecessary allocations
+          // Capture sandbox state at queue time so the deferred closure
+          // evaluates with the correct EXEC-defined variables (e.g. startingIndex).
+          // Without this, all closures would see the sandbox from the LAST loop iteration.
+          const capturedSandbox: SandBox = { __code__: undefined, __result__: undefined, ...ctx.jsSandbox };
+
+          // Capture loop state (vars + index) for closures inside FOR loops.
           const isInsideLoop = ctx.loops.length > 0;
           const capturedVars = isInsideLoop ? { ...ctx.vars } : null;
           const capturedIdx = isInsideLoop ? getCurLoop(ctx)?.idx : undefined;
@@ -778,16 +781,14 @@ const processCmd: CommandProcessor = async (
               if (savedLoop && capturedIdx !== undefined)
                 savedLoop.idx = capturedIdx;
               try {
-                return runUserJsAndGetRaw(data, cmdRest, ctx);
+                return runUserJsAndGetRaw(data, cmdRest, ctx, capturedSandbox);
               } finally {
-                // Restore original vars
                 ctx.vars = savedVars;
                 if (savedLoop && savedIdx !== undefined)
                   savedLoop.idx = savedIdx;
               }
             }
-            // Not inside a loop - execute directly without state swapping
-            return runUserJsAndGetRaw(data, cmdRest, ctx);
+            return runUserJsAndGetRaw(data, cmdRest, ctx, capturedSandbox);
           };
 
           // Store the pending download for later resolution

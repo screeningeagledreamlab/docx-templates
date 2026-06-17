@@ -16,13 +16,16 @@ import { logger } from './debug';
 export async function runUserJsAndGetRaw(
   data: ReportData | undefined,
   code: string,
-  ctx: Context
+  ctx: Context,
+  sandboxOverride?: SandBox
 ): Promise<any> {
   // Retrieve the current JS sandbox contents (if any) and add
   // the code to be run, and a placeholder for the result,
-  // as well as all data defined by the user
+  // as well as all data defined by the user.
+  // When sandboxOverride is provided (deferred image evaluation),
+  // use it instead of ctx.jsSandbox to avoid stale state.
   const sandbox: SandBox = {
-    ...(ctx.jsSandbox || {}),
+    ...(sandboxOverride || ctx.jsSandbox || {}),
     __code__: code,
     __result__: undefined,
     ...data,
@@ -74,11 +77,15 @@ export async function runUserJsAndGetRaw(
   }
 
   // Save the sandbox for later use, omitting the __code__ and __result__ properties.
-  ctx.jsSandbox = {
-    ...context,
-    __code__: undefined,
-    __result__: undefined,
-  };
+  // Skip writeback when a sandboxOverride was provided — deferred image evaluations
+  // run after template walking is complete and should not pollute the shared sandbox.
+  if (!sandboxOverride) {
+    ctx.jsSandbox = {
+      ...context,
+      __code__: undefined,
+      __result__: undefined,
+    };
+  }
   logger.debug('Command returned: ', result);
   return result;
 }
