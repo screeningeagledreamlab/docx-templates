@@ -162,7 +162,7 @@ export type CreateReportOptions = {
     preserveSpace: boolean;
     compressionLevel: number;
     allowNestedIf: boolean;
-    imageConcurrency: number;
+    imageConcurrency?: number;
 };
 export type SandBox = {
     __code__: string | undefined;

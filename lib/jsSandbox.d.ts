@@ -1,2 +1,2 @@
-import { ReportData, Context } from './types';
-export declare function runUserJsAndGetRaw(data: ReportData | undefined, code: string, ctx: Context): Promise<any>;
+import { ReportData, Context, SandBox } from './types';
+export declare function runUserJsAndGetRaw(data: ReportData | undefined, code: string, ctx: Context, sandboxOverride?: SandBox): Promise<any>;
