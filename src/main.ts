@@ -168,7 +168,7 @@ async function createReport(
     preserveSpace: options.preserveSpace ?? true,
     compressionLevel: options.compressionLevel ?? 1,
     allowNestedIf: options.allowNestedIf ?? false,
-    imageConcurrency: options.imageConcurrency ?? 10,
+    imageConcurrency: options.imageConcurrency,
   };
   const xmlOptions = {
     literalXmlDelimiter,
@@ -368,7 +368,6 @@ export async function listCommands(
     preserveSpace: true,
     compressionLevel: 1,
     allowNestedIf: false,
-    imageConcurrency: 10,
   };
 
   const { jsTemplate, mainDocument, zip } = await parseTemplate(template);
