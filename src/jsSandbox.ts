@@ -23,14 +23,17 @@ export async function runUserJsAndGetRaw(
   // the code to be run, and a placeholder for the result,
   // as well as all data defined by the user.
   // When sandboxOverride is provided (deferred image evaluation),
-  // use it instead of ctx.jsSandbox to avoid stale state.
-  const sandbox: SandBox = {
-    ...(sandboxOverride || ctx.jsSandbox || {}),
-    __code__: code,
-    __result__: undefined,
-    ...data,
-    ...ctx.options.additionalJsContext,
-  };
+  // use it as-is — data, additionalJsContext, vars, and $idx are
+  // already baked in with the correct priority from walk time.
+  const sandbox: SandBox = sandboxOverride
+    ? { ...sandboxOverride, __code__: code, __result__: undefined }
+    : {
+        ...(ctx.jsSandbox || {}),
+        __code__: code,
+        __result__: undefined,
+        ...data,
+        ...ctx.options.additionalJsContext,
+      };
 
   // Add currently defined vars, including loop vars and the index
   // of the innermost loop.
