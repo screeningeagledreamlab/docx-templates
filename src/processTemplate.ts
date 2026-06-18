@@ -761,35 +761,25 @@ const processCmd: CommandProcessor = async (
           // Build placeholder XML structure with node references for later updates
           const pendingDownload = buildPendingImageNode(ctx, relId, id, cmd);
 
-          // Capture sandbox state at queue time so the deferred closure
-          // evaluates with the correct EXEC-defined variables (e.g. startingIndex).
-          // Without this, all closures would see the sandbox from the LAST loop iteration.
-          const capturedSandbox: SandBox = { __code__: undefined, __result__: undefined, ...ctx.jsSandbox };
-
-          // Capture loop state (vars + index) for closures inside FOR loops.
-          const isInsideLoop = ctx.loops.length > 0;
-          const capturedVars = isInsideLoop ? { ...ctx.vars } : null;
-          const capturedIdx = isInsideLoop ? getCurLoop(ctx)?.idx : undefined;
-
-          pendingDownload.fetchImage = () => {
-            // If we captured loop state, temporarily restore it for this evaluation
-            if (capturedVars !== null) {
-              const savedVars = ctx.vars;
-              const savedLoop = getCurLoop(ctx);
-              const savedIdx = savedLoop?.idx;
-              ctx.vars = capturedVars;
-              if (savedLoop && capturedIdx !== undefined)
-                savedLoop.idx = capturedIdx;
-              try {
-                return runUserJsAndGetRaw(data, cmdRest, ctx, capturedSandbox);
-              } finally {
-                ctx.vars = savedVars;
-                if (savedLoop && savedIdx !== undefined)
-                  savedLoop.idx = savedIdx;
-              }
-            }
-            return runUserJsAndGetRaw(data, cmdRest, ctx, capturedSandbox);
+          // Build a frozen sandbox capturing the complete evaluation environment
+          // at this point in the walk — correct vars, loop idx, EXEC state.
+          // Each pending download gets its own independent sandbox, so concurrent
+          // evaluation in resolvePendingImages needs no shared ctx mutation.
+          const frozenSandbox: SandBox = {
+            __code__: undefined,
+            __result__: undefined,
+            ...(ctx.jsSandbox || {}),
+            ...data,
+            ...ctx.options.additionalJsContext,
           };
+          const curLoop = getCurLoop(ctx);
+          if (curLoop) frozenSandbox.$idx = curLoop.idx;
+          Object.keys(ctx.vars).forEach(varName => {
+            frozenSandbox[`$${varName}`] = ctx.vars[varName];
+          });
+
+          pendingDownload.frozenSandbox = frozenSandbox;
+          pendingDownload.code = cmdRest;
 
           // Store the pending download for later resolution
           ctx.pendingImageDownloads.push(pendingDownload);
@@ -1198,7 +1188,8 @@ const buildPendingImageNode = (
   // Return the pending download with node references
   return {
     id: relId,
-    fetchImage: () => Promise.resolve(undefined), // Will be replaced with actual fetch function
+    frozenSandbox: { __code__: undefined, __result__: undefined },
+    code: '',
     cmd,
     extentNode,
     picExtNode,
@@ -1230,9 +1221,11 @@ export async function resolvePendingImages(
   // Create a concurrency limiter
   const limit = pLimit(concurrency);
 
-  // Execute downloads with concurrency control
+  // Execute evaluations with concurrency control — each uses its own frozen sandbox
   const results = await Promise.allSettled(
-    pendingDownloads.map(pd => limit(() => pd.fetchImage()))
+    pendingDownloads.map(pd =>
+      limit(() => runUserJsAndGetRaw(undefined, pd.code, ctx, pd.frozenSandbox))
+    )
   );
 
   // Process results and update nodes

@@ -33,12 +33,16 @@ export async function runUserJsAndGetRaw(
   };
 
   // Add currently defined vars, including loop vars and the index
-  // of the innermost loop
-  const curLoop = getCurLoop(ctx);
-  if (curLoop) sandbox.$idx = curLoop.idx;
-  Object.keys(ctx.vars).forEach(varName => {
-    sandbox[`$${varName}`] = ctx.vars[varName];
-  });
+  // of the innermost loop.
+  // Skip when sandboxOverride is provided — the frozen sandbox already
+  // contains the correct $idx and $varName values from walk time.
+  if (!sandboxOverride) {
+    const curLoop = getCurLoop(ctx);
+    if (curLoop) sandbox.$idx = curLoop.idx;
+    Object.keys(ctx.vars).forEach(varName => {
+      sandbox[`$${varName}`] = ctx.vars[varName];
+    });
+  }
 
   // Run the JS snippet and extract the result
   let context;
