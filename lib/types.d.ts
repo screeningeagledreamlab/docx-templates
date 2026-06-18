@@ -212,7 +212,8 @@ export type Context = {
 };
 export type PendingImageDownload = {
     id: string;
-    fetchImage: () => Promise<ImagePars | undefined>;
+    frozenSandbox: SandBox;
+    code: string;
     cmd: string;
     extentNode?: NonTextNode;
     picExtNode?: NonTextNode;

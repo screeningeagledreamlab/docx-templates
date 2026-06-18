@@ -223,7 +223,8 @@ type Context = {
 };
 type PendingImageDownload = {
     id: string;
-    fetchImage: () => Promise<ImagePars | undefined>;
+    frozenSandbox: SandBox;
+    code: string;
     cmd: string;
     extentNode?: NonTextNode;
     picExtNode?: NonTextNode;
@@ -272,40 +273,6 @@ type LoopStatus = {
      * When true, empty table cells can be removed after the loop.
      */
     isTableCellLoop?: boolean;
-};
-type ImagePars = {
-    /**
-     * Desired width of the image in centimeters.
-     */
-    width: number;
-    /**
-     * Desired height of the image in centimeters.
-     */
-    height: number;
-    /**
-     * Either an ArrayBuffer or a base64 string with the image data.
-     */
-    data: ArrayBuffer | string;
-    /**
-     * Optional. When injecting an SVG image, a fallback non-SVG (png/jpg/gif, etc.) image can be provided. This thumbnail is used when SVG images are not supported (e.g. older versions of Word) or when the document is previewed by e.g. Windows Explorer. See usage example below.
-     */
-    thumbnail?: Image;
-    /**
-     * One of '.png', '.gif', '.jpg', '.jpeg', '.svg'.
-     */
-    extension: ImageExtension;
-    /**
-     * Optional alt text.
-     */
-    alt?: string;
-    /**
-     * Optional rotation in degrees, with positive angles moving clockwise.
-     */
-    rotation?: number;
-    /**
-     * Optional caption
-     */
-    caption?: string;
 };
 type CommandSummary = {
     raw: string;
