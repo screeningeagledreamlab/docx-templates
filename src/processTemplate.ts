@@ -42,6 +42,20 @@ import pLimit from 'p-limit';
 // Default concurrency limit for parallel image downloads
 const DEFAULT_IMAGE_CONCURRENCY = 10;
 
+// Deep-clone plain objects and arrays; return primitives and non-plain values
+// (functions, Buffers, Dates, etc.) as-is. Handles VM-created objects whose
+// constructor differs from the host Object by checking constructor.name.
+function cloneVal(val: unknown): unknown {
+  if (val == null || typeof val !== 'object') return val;
+  if (Array.isArray(val)) return val.map(cloneVal);
+  if (val.constructor?.name !== 'Object') return val;
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(val as Record<string, unknown>)) {
+    out[k] = cloneVal((val as Record<string, unknown>)[k]);
+  }
+  return out;
+}
+
 export function newContext(
   options: CreateReportOptions,
   imageAndShapeIdIncrement = 0
@@ -765,17 +779,28 @@ const processCmd: CommandProcessor = async (
           // at this point in the walk — correct vars, loop idx, EXEC state.
           // Each pending download gets its own independent sandbox, so concurrent
           // evaluation in resolvePendingImages needs no shared ctx mutation.
+          //
+          // Deep-clone jsSandbox and vars to avoid cross-iteration leakage when
+          // EXEC mutates object properties (e.g. $config.index = $row). Without
+          // cloning, all frozen sandboxes share the same object references and
+          // see the final iteration's values. Data and additionalJsContext are
+          // NOT cloned — data is read-only by convention, and additionalJsContext
+          // contains functions that cannot be cloned.
+          // Clone jsSandbox per-key so plain objects get independent copies
+          // while functions (from additionalJsContext) keep their references.
+          const clonedSandbox: SandBox = { __code__: undefined, __result__: undefined };
+          for (const k of Object.keys(ctx.jsSandbox || {})) {
+            clonedSandbox[k] = cloneVal((ctx.jsSandbox as SandBox)[k]);
+          }
           const frozenSandbox: SandBox = {
-            __code__: undefined,
-            __result__: undefined,
-            ...(ctx.jsSandbox || {}),
+            ...clonedSandbox,
             ...data,
             ...ctx.options.additionalJsContext,
           };
           const curLoop = getCurLoop(ctx);
           if (curLoop) frozenSandbox.$idx = curLoop.idx;
           Object.keys(ctx.vars).forEach(varName => {
-            frozenSandbox[`$${varName}`] = ctx.vars[varName];
+            frozenSandbox[`$${varName}`] = cloneVal(ctx.vars[varName]);
           });
 
           pendingDownload.frozenSandbox = frozenSandbox;

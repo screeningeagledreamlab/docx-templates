@@ -819,3 +819,91 @@ describe('parallel image sandbox state bug', () => {
     expect(report).toBeInstanceOf(Uint8Array);
   });
 });
+
+// ============================================================
+// Bug reproduction: frozen sandbox shallow-copies mutable object vars
+// When EXEC mutates a property on an object variable (e.g. $config.index = $row),
+// all frozen sandboxes share the same object reference. Later iterations'
+// mutations are visible to earlier frozen sandboxes, so all IMAGE commands
+// see the final iteration's value instead of their own.
+// ============================================================
+describe('parallel image mutable var leakage bug', () => {
+  // Template structure (mutable_var_image_template.docx):
+  //   {{! $config = { index: -1 }; }}
+  //   {{FOR row in rows}}
+  //     {{! $config.index = $row; }}
+  //     {{IMAGE getImage($config.index)}}
+  //   {{END-FOR row}}
+  //
+  // Data: rows = [0, 1, 2]
+  //   row 0: $config.index = 0 -> getImage(0)
+  //   row 1: $config.index = 1 -> getImage(1)
+  //   row 2: $config.index = 2 -> getImage(2)
+  //
+  // BUG: In parallel mode, all frozen sandboxes share the same $config object.
+  // After the walk completes, $config.index = 2 (last iteration).
+  // All deferred IMAGE evaluations see $config.index = 2 -> getImage(2) for all.
+
+  const samplePng = fs.readFileSync(
+    path.join(__dirname, 'fixtures', 'sample.png')
+  );
+
+  const rows = [0, 1, 2];
+
+  let template: Buffer;
+  beforeAll(async () => {
+    template = await fs.promises.readFile(
+      path.join(__dirname, 'fixtures', 'mutable_var_image_template.docx')
+    );
+  });
+
+  it('inline mode passes correct index to each getImage call', async () => {
+    const receivedIndices: number[] = [];
+    const getImage = (index: number) => {
+      receivedIndices.push(index);
+      return {
+        width: 2,
+        height: 2,
+        data: samplePng,
+        extension: '.png' as const,
+      };
+    };
+
+    const report = await createReport({
+      template,
+      data: { rows },
+      additionalJsContext: { getImage },
+      cmdDelimiter: ['{{', '}}'],
+    });
+
+    expect(report).toBeInstanceOf(Uint8Array);
+    // Inline mode: each IMAGE is evaluated immediately, sees correct $config.index
+    expect(receivedIndices).toEqual([0, 1, 2]);
+  });
+
+  it('parallel mode should pass correct index to each getImage call', async () => {
+    const receivedIndices: number[] = [];
+    const getImage = (index: number) => {
+      receivedIndices.push(index);
+      return {
+        width: 2,
+        height: 2,
+        data: samplePng,
+        extension: '.png' as const,
+      };
+    };
+
+    const report = await createReport({
+      template,
+      data: { rows },
+      additionalJsContext: { getImage },
+      cmdDelimiter: ['{{', '}}'],
+      imageConcurrency: 5,
+    });
+
+    expect(report).toBeInstanceOf(Uint8Array);
+    // BUG: with shallow-copy frozen sandbox, all calls see $config.index = 2
+    // (the value from the last FOR iteration), so we get [2, 2, 2] instead of [0, 1, 2]
+    expect(receivedIndices).toEqual([0, 1, 2]);
+  });
+});
