@@ -44,11 +44,21 @@ const DEFAULT_IMAGE_CONCURRENCY = 10;
 
 // Deep-clone plain objects and arrays; return primitives and non-plain values
 // (functions, Buffers, Dates, etc.) as-is. Handles VM-created objects whose
-// constructor differs from the host Object by checking constructor.name.
+// constructor differs from the host Object by checking constructor.name,
+// and also handles null-prototype objects (Object.create(null)).
+function isPlainObject(val: object): val is Record<string, unknown> {
+  const proto = Object.getPrototypeOf(val);
+  return (
+    proto === null ||
+    proto === Object.prototype ||
+    proto?.constructor?.name === 'Object'
+  );
+}
+
 function cloneVal(val: unknown): unknown {
   if (val == null || typeof val !== 'object') return val;
   if (Array.isArray(val)) return val.map(cloneVal);
-  if (val.constructor?.name !== 'Object') return val;
+  if (!isPlainObject(val)) return val;
   const out: Record<string, unknown> = {};
   for (const k of Object.keys(val as Record<string, unknown>)) {
     out[k] = cloneVal((val as Record<string, unknown>)[k]);
