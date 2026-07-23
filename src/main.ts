@@ -170,6 +170,12 @@ async function createReport(
     allowNestedIf: options.allowNestedIf ?? false,
     imageConcurrency: options.imageConcurrency,
   };
+  if (
+    createOptions.imageConcurrency != null &&
+    createOptions.imageConcurrency < 1
+  ) {
+    throw new Error('imageConcurrency must be >= 1');
+  }
   const xmlOptions = {
     literalXmlDelimiter,
     indentXml: createOptions.indentXml,
