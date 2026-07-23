@@ -788,7 +788,10 @@ const processCmd: CommandProcessor = async (
           // contains functions that cannot be cloned.
           // Clone jsSandbox per-key so plain objects get independent copies
           // while functions (from additionalJsContext) keep their references.
-          const clonedSandbox: SandBox = { __code__: undefined, __result__: undefined };
+          const clonedSandbox: SandBox = {
+            __code__: undefined,
+            __result__: undefined,
+          };
           for (const k of Object.keys(ctx.jsSandbox || {})) {
             clonedSandbox[k] = cloneVal((ctx.jsSandbox as SandBox)[k]);
           }
