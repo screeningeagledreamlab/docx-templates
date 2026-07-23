@@ -1465,14 +1465,15 @@ function getImageData(imagePars: ImagePars): Image {
 
 // Process image inline: build placeholder nodes, then immediately apply resolved data.
 const processImage = (ctx: Context, imagePars: ImagePars) => {
-  // Assign ID and store image data
-  const imgRelId = imageToContext(ctx, getImageData(imagePars));
+  // Assign image ID (same as parallel path)
+  ctx.imageAndShapeIdIncrement += 1;
   const id = String(ctx.imageAndShapeIdIncrement);
+  const relId = `img${id}`;
 
   // Build placeholder XML structure (shared with parallel path)
-  const pending = buildPendingImageNode(ctx, imgRelId, id, '');
+  const pending = buildPendingImageNode(ctx, relId, id, '');
 
-  // Apply resolved data immediately (dimensions, alt text, rotation, SVG handling)
+  // Apply resolved data immediately (dimensions, alt text, rotation, SVG handling, storage)
   applyImageData(ctx, imagePars, pending);
 
   // Handle caption (inline mode uses ctx.pendingImageNode)
