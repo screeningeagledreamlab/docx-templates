@@ -1248,9 +1248,10 @@ const buildPendingImageNode = (
 export async function resolvePendingImages(
   ctx: Context,
   concurrency: number = DEFAULT_IMAGE_CONCURRENCY
-): Promise<void> {
+): Promise<Error[]> {
   const pendingDownloads = ctx.pendingImageDownloads;
-  if (pendingDownloads.length === 0) return;
+  if (pendingDownloads.length === 0) return [];
+  const errors: Error[] = [];
 
   logger.debug(
     `Resolving ${pendingDownloads.length} pending image downloads with concurrency limit of ${concurrency}...`
@@ -1274,16 +1275,16 @@ export async function resolvePendingImages(
     if (result.status === 'rejected') {
       // Handle download failure
       const error = result.reason;
+      const imgError = new ImageError(
+        error instanceof Error ? error : new Error(String(error)),
+        pending.cmd
+      );
       if (ctx.options.errorHandler != null) {
-        await ctx.options.errorHandler(
-          error instanceof Error ? error : new Error(String(error)),
-          pending.cmd
-        );
+        await ctx.options.errorHandler(imgError, pending.cmd);
       } else if (ctx.options.failFast) {
-        throw new ImageError(
-          error instanceof Error ? error : new Error(String(error)),
-          pending.cmd
-        );
+        throw imgError;
+      } else {
+        errors.push(imgError);
       }
 
       // Skip this image - it will have placeholder dimensions
@@ -1394,10 +1395,13 @@ export async function resolvePendingImages(
       }
     } catch (e) {
       if (!isError(e)) throw e;
+      const imgError = new ImageError(e, pending.cmd);
       if (ctx.options.errorHandler != null) {
-        await ctx.options.errorHandler(e, pending.cmd);
+        await ctx.options.errorHandler(imgError, pending.cmd);
       } else if (ctx.options.failFast) {
-        throw new ImageError(e, pending.cmd);
+        throw imgError;
+      } else {
+        errors.push(imgError);
       }
     }
   }
@@ -1405,6 +1409,7 @@ export async function resolvePendingImages(
   // Clear the pending downloads
   ctx.pendingImageDownloads = [];
   logger.debug('All pending image downloads resolved.');
+  return errors;
 }
 
 function getImageData(imagePars: ImagePars): Image {
