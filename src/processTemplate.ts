@@ -1355,7 +1355,15 @@ export async function resolvePendingImages(
   // Execute evaluations with concurrency control — each uses its own frozen sandbox
   const results = await Promise.allSettled(
     pendingDownloads.map(pd =>
-      limit(() => runUserJsAndGetRaw(undefined, pd.code, ctx, pd.frozenSandbox, pd.frozenCtx))
+      limit(() =>
+        runUserJsAndGetRaw(
+          undefined,
+          pd.code,
+          ctx,
+          pd.frozenSandbox,
+          pd.frozenCtx
+        )
+      )
     )
   );
 

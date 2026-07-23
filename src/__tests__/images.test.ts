@@ -988,7 +988,9 @@ describe('parallel image error handling and edge cases', () => {
       })
     ).rejects.toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ message: expect.stringContaining('image download failed') }),
+        expect.objectContaining({
+          message: expect.stringContaining('image download failed'),
+        }),
       ])
     );
   });
@@ -1034,7 +1036,9 @@ describe('parallel image error handling and edge cases', () => {
         svgImgStr: () => ({
           width: 6,
           height: 6,
-          data: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><rect width="100" height="100"/></svg>'),
+          data: Buffer.from(
+            '<svg xmlns="http://www.w3.org/2000/svg"><rect width="100" height="100"/></svg>'
+          ),
           extension: '.svg' as const,
         }),
       },
