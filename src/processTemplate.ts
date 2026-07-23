@@ -821,12 +821,17 @@ const processCmd: CommandProcessor = async (
           pendingDownload.frozenSandbox = frozenSandbox;
           pendingDownload.code = cmdRest;
 
-          // Snapshot ctx for runJs compatibility: shallow copy with frozen
-          // vars and loops so runJs sees correct walk-time state
+          // Snapshot ctx for runJs compatibility: deep-clone vars (same as
+          // frozenSandbox) and shallow-copy loops so runJs sees correct
+          // walk-time state without cross-iteration object mutation leakage
           if (ctx.options.runJs) {
+            const frozenVars: Record<string, unknown> = {};
+            for (const k of Object.keys(ctx.vars)) {
+              frozenVars[k] = cloneVal(ctx.vars[k]);
+            }
             pendingDownload.frozenCtx = {
               ...ctx,
-              vars: { ...ctx.vars },
+              vars: frozenVars,
               loops: ctx.loops.map(l => ({ ...l })),
             };
           }
