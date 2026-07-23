@@ -229,7 +229,10 @@ async function createReport(
   // Resolve pending image downloads only if parallel mode is enabled
   if (createOptions.imageConcurrency != null) {
     logger.debug('Resolving pending image downloads in parallel...');
-    const imageErrors = await resolvePendingImages(ctx, createOptions.imageConcurrency);
+    const imageErrors = await resolvePendingImages(
+      ctx,
+      createOptions.imageConcurrency
+    );
     if (imageErrors.length > 0) throw imageErrors;
   }
 
@@ -264,7 +267,10 @@ async function createReport(
 
     // Resolve pending images for this secondary XML (only if parallel mode is enabled)
     if (createOptions.imageConcurrency != null) {
-      const imageErrors = await resolvePendingImages(ctx, createOptions.imageConcurrency);
+      const imageErrors = await resolvePendingImages(
+        ctx,
+        createOptions.imageConcurrency
+      );
       if (imageErrors.length > 0) throw imageErrors;
     }
 
