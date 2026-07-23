@@ -1241,6 +1241,88 @@ const buildPendingImageNode = (
 };
 
 /**
+ * Apply resolved image data to a pending image's placeholder XML nodes.
+ * Shared by both inline (processImage) and parallel (resolvePendingImages) paths.
+ */
+const applyImageData = (
+  ctx: Context,
+  imagePars: ImagePars,
+  pending: PendingImageDownload
+) => {
+  validateImagePars(imagePars);
+  const cx = (imagePars.width * 360e3).toFixed(0);
+  const cy = (imagePars.height * 360e3).toFixed(0);
+
+  // Update dimensions
+  if (pending.extentNode) {
+    pending.extentNode._attrs.cx = cx;
+    pending.extentNode._attrs.cy = cy;
+  }
+  if (pending.picExtNode) {
+    pending.picExtNode._attrs.cx = cx;
+    pending.picExtNode._attrs.cy = cy;
+  }
+
+  // Handle rotation
+  if (imagePars.rotation && pending.xfrmNode) {
+    const rot = (imagePars.rotation * 60e3).toString();
+    pending.xfrmNode._attrs.rot = rot;
+  }
+
+  // Handle alt text
+  const alt = imagePars.alt || '';
+  if (pending.docPrNode) {
+    pending.docPrNode._attrs.descr = alt;
+  }
+  if (pending.cNvPrNode) {
+    pending.cNvPrNode._attrs.descr = alt;
+  }
+
+  // Store image data
+  const imgData = getImageData(imagePars);
+  validateImage(imgData);
+
+  // Handle SVG images - need to add thumbnail
+  if (imgData.extension === '.svg') {
+    const thumbnail: Image = imagePars.thumbnail ?? {
+      data: 'bm90aGluZwo=',
+      extension: '.png',
+    };
+
+    // Store the SVG with its original ID
+    ctx.images[pending.id] = imgData;
+
+    // Create a new ID for the thumbnail
+    const thumbRelId = imageToContext(ctx, thumbnail);
+
+    // Add SVG extension to extLst
+    if (pending.extLstNode) {
+      const svgBlipNode = newNonTextNode('asvg:svgBlip', {
+        'xmlns:asvg':
+          'http://schemas.microsoft.com/office/drawing/2016/SVG/main',
+        'r:embed': pending.id,
+      });
+      const svgExtNode = newNonTextNode(
+        'a:ext',
+        { uri: '{96DAC541-7B7A-43D3-8B79-37D633B846F1}' },
+        [svgBlipNode]
+      );
+      svgExtNode._parent = pending.extLstNode;
+      svgBlipNode._parent = svgExtNode;
+      pending.extLstNode._children.push(svgExtNode);
+    }
+
+    // Update blip to reference thumbnail instead of SVG
+    if (pending.blipNode) {
+      pending.blipNode._attrs['r:embed'] = thumbRelId;
+    }
+  } else {
+    // Non-SVG image - just store the data
+    ctx.images[pending.id] = imgData;
+  }
+};
+
+/**
  * Resolve all pending image downloads in parallel with concurrency control.
  * This should be called after template walking completes but before XML generation.
  * Updates ctx.images with the resolved image data and updates XML node dimensions.
@@ -1273,7 +1355,6 @@ export async function resolvePendingImages(
     const pending = pendingDownloads[i];
 
     if (result.status === 'rejected') {
-      // Handle download failure
       const error = result.reason;
       const imgError = new ImageError(
         error instanceof Error ? error : new Error(String(error)),
@@ -1286,110 +1367,25 @@ export async function resolvePendingImages(
       } else {
         errors.push(imgError);
       }
-
-      // Skip this image - it will have placeholder dimensions
       continue;
     }
 
     const imagePars = result.value;
-    if (imagePars == null) {
-      // No image returned, skip
-      continue;
-    }
+    if (imagePars == null) continue;
 
     try {
-      // Validate image parameters
-      validateImagePars(imagePars);
+      applyImageData(ctx, imagePars, pending);
 
-      // Calculate dimensions
-      const cx = (imagePars.width * 360e3).toFixed(0);
-      const cy = (imagePars.height * 360e3).toFixed(0);
-
-      // Update XML node dimensions
-      if (pending.extentNode) {
-        pending.extentNode._attrs.cx = cx;
-        pending.extentNode._attrs.cy = cy;
-      }
-      if (pending.picExtNode) {
-        pending.picExtNode._attrs.cx = cx;
-        pending.picExtNode._attrs.cy = cy;
-      }
-
-      // Handle rotation
-      if (imagePars.rotation && pending.xfrmNode) {
-        const rot = (imagePars.rotation * 60e3).toString();
-        pending.xfrmNode._attrs.rot = rot;
-      }
-
-      // Handle alt text
-      const alt = imagePars.alt || '';
-      if (pending.docPrNode) {
-        pending.docPrNode._attrs.descr = alt;
-      }
-      if (pending.cNvPrNode) {
-        pending.cNvPrNode._attrs.descr = alt;
-      }
-
-      // Store image data
-      const imgData = getImageData(imagePars);
-      validateImage(imgData);
-
-      // Handle SVG images - need to add thumbnail
-      if (imgData.extension === '.svg') {
-        const thumbnail: Image = imagePars.thumbnail ?? {
-          data: 'bm90aGluZwo=',
-          extension: '.png',
-        };
-
-        // Store the SVG with its original ID
-        ctx.images[pending.id] = imgData;
-
-        // Create a new ID for the thumbnail
-        ctx.imageAndShapeIdIncrement += 1;
-        const thumbId = String(ctx.imageAndShapeIdIncrement);
-        const thumbRelId = `img${thumbId}`;
-        validateImage(thumbnail);
-        ctx.images[thumbRelId] = thumbnail;
-
-        // Add SVG extension to extLst
-        if (pending.extLstNode) {
-          const svgBlipNode = newNonTextNode('asvg:svgBlip', {
-            'xmlns:asvg':
-              'http://schemas.microsoft.com/office/drawing/2016/SVG/main',
-            'r:embed': pending.id,
-          });
-          const svgExtNode = newNonTextNode(
-            'a:ext',
-            { uri: '{96DAC541-7B7A-43D3-8B79-37D633B846F1}' },
-            [svgBlipNode]
-          );
-          // Set parent references
-          svgExtNode._parent = pending.extLstNode;
-          svgBlipNode._parent = svgExtNode;
-          pending.extLstNode._children.push(svgExtNode);
-        }
-
-        // Update blip to reference thumbnail instead of SVG
-        if (pending.blipNode) {
-          pending.blipNode._attrs['r:embed'] = thumbRelId;
-        }
-      } else {
-        // Non-SVG image - just store the data
-        ctx.images[pending.id] = imgData;
-      }
-
-      // Handle caption if provided
+      // Handle caption if provided (parallel mode stores captionParent reference)
       if (imagePars.caption && pending.captionParent) {
         const captionBr = newNonTextNode('w:br', {});
         const captionText = newTextNode(imagePars.caption);
         const captionT = newNonTextNode('w:t', {}, [captionText]);
 
-        // Set parent references
         captionBr._parent = pending.captionParent;
         captionT._parent = pending.captionParent;
         captionText._parent = captionT;
 
-        // Add caption nodes after the drawing node
         pending.captionParent._children.push(captionBr);
         pending.captionParent._children.push(captionT);
       }
@@ -1422,130 +1418,23 @@ function getImageData(imagePars: ImagePars): Image {
   return { extension, data };
 }
 
-// Process image and build XML node - used after image data is resolved
-const processImage = (
-  ctx: Context,
-  imagePars: ImagePars,
-  preAssignedRelId?: string
-) => {
-  validateImagePars(imagePars);
-  const cx = (imagePars.width * 360e3).toFixed(0);
-  const cy = (imagePars.height * 360e3).toFixed(0);
+// Process image inline: build placeholder nodes, then immediately apply resolved data.
+const processImage = (ctx: Context, imagePars: ImagePars) => {
+  // Assign ID and store image data
+  const imgRelId = imageToContext(ctx, getImageData(imagePars));
+  const id = String(ctx.imageAndShapeIdIncrement);
 
-  let imgRelId: string;
-  let id: string;
+  // Build placeholder XML structure (shared with parallel path)
+  const pending = buildPendingImageNode(ctx, imgRelId, id, '');
 
-  if (preAssignedRelId) {
-    // Use pre-assigned ID from parallel download
-    imgRelId = preAssignedRelId;
-    id = preAssignedRelId.replace('img', '');
-    // Store the image data directly with the pre-assigned ID
-    const imgData = getImageData(imagePars);
-    validateImage(imgData);
-    ctx.images[imgRelId] = imgData;
-  } else {
-    // Legacy path: assign new ID
-    imgRelId = imageToContext(ctx, getImageData(imagePars));
-    id = String(ctx.imageAndShapeIdIncrement);
-  }
-  const alt = imagePars.alt || '';
-  const node = newNonTextNode;
+  // Apply resolved data immediately (dimensions, alt text, rotation, SVG handling)
+  applyImageData(ctx, imagePars, pending);
 
-  const extNodes = [];
-  extNodes.push(
-    node('a:ext', { uri: '{28A0092B-C50C-407E-A947-70E740481C1C}' }, [
-      node('a14:useLocalDpi', {
-        'xmlns:a14': 'http://schemas.microsoft.com/office/drawing/2010/main',
-        val: '0',
-      }),
-    ])
-  );
-
-  // http://officeopenxml.com/drwSp-rotate.php
-  // Values are in 60,000ths of a degree, with positive angles moving clockwise or towards the positive y-axis.
-  const rot = imagePars.rotation
-    ? (imagePars.rotation * 60e3).toString()
-    : undefined;
-
-  if (ctx.images[imgRelId].extension === '.svg') {
-    // Default to an empty thumbnail, as it is not critical and just part of the docx standard's scaffolding.
-    // Without a thumbnail, the svg won't render (even in newer versions of Word that don't need the thumbnail).
-    const thumbnail: Image = imagePars.thumbnail ?? {
-      data: 'bm90aGluZwo=',
-      extension: '.png',
-    };
-
-    const thumbRelId = imageToContext(ctx, thumbnail);
-    extNodes.push(
-      node('a:ext', { uri: '{96DAC541-7B7A-43D3-8B79-37D633B846F1}' }, [
-        node('asvg:svgBlip', {
-          'xmlns:asvg':
-            'http://schemas.microsoft.com/office/drawing/2016/SVG/main',
-          'r:embed': imgRelId,
-        }),
-      ])
-    );
-
-    // For SVG the thumb is placed where the image normally goes.
-    imgRelId = thumbRelId;
-  }
-
-  const pic = node(
-    'pic:pic',
-    { 'xmlns:pic': 'http://schemas.openxmlformats.org/drawingml/2006/picture' },
-    [
-      node('pic:nvPicPr', {}, [
-        node('pic:cNvPr', { id: '0', name: `Picture ${id}`, descr: alt }),
-        node('pic:cNvPicPr', {}, [
-          node('a:picLocks', { noChangeAspect: '1', noChangeArrowheads: '1' }),
-        ]),
-      ]),
-      node('pic:blipFill', {}, [
-        node('a:blip', { 'r:embed': imgRelId, cstate: 'print' }, [
-          node('a:extLst', {}, extNodes),
-        ]),
-        node('a:srcRect'),
-        node('a:stretch', {}, [node('a:fillRect')]),
-      ]),
-      node('pic:spPr', { bwMode: 'auto' }, [
-        node('a:xfrm', rot ? { rot } : {}, [
-          node('a:off', { x: '0', y: '0' }),
-          node('a:ext', { cx, cy }),
-        ]),
-        node('a:prstGeom', { prst: 'rect' }, [node('a:avLst')]),
-        node('a:noFill'),
-        node('a:ln', {}, [node('a:noFill')]),
-      ]),
-    ]
-  );
-  const drawing = node('w:drawing', {}, [
-    node('wp:inline', { distT: '0', distB: '0', distL: '0', distR: '0' }, [
-      node('wp:extent', { cx, cy }),
-      node('wp:docPr', { id, name: `Picture ${id}`, descr: alt }),
-      node('wp:cNvGraphicFramePr', {}, [
-        node('a:graphicFrameLocks', {
-          'xmlns:a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
-          noChangeAspect: '1',
-        }),
-      ]),
-      node(
-        'a:graphic',
-        { 'xmlns:a': 'http://schemas.openxmlformats.org/drawingml/2006/main' },
-        [
-          node(
-            'a:graphicData',
-            { uri: 'http://schemas.openxmlformats.org/drawingml/2006/picture' },
-            [pic]
-          ),
-        ]
-      ),
-    ]),
-  ]);
-  ctx.pendingImageNode = { image: drawing };
+  // Handle caption (inline mode uses ctx.pendingImageNode)
   if (imagePars.caption) {
-    ctx.pendingImageNode.caption = [
-      node('w:br'),
-      node('w:t', {}, [newTextNode(imagePars.caption)]),
+    ctx.pendingImageNode!.caption = [
+      newNonTextNode('w:br'),
+      newNonTextNode('w:t', {}, [newTextNode(imagePars.caption)]),
     ];
   }
 };
