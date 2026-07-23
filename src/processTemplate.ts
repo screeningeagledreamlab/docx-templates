@@ -1435,6 +1435,7 @@ export async function resolvePendingImages(
         pending.captionParent._children.push(captionT);
       }
     } catch (e) {
+      removeDrawingNode(pending);
       if (!isError(e)) throw e;
       const imgError = new ImageError(e, pending.cmd);
       if (ctx.options.errorHandler != null) {
