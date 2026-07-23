@@ -213,6 +213,7 @@ export type Context = {
 export type PendingImageDownload = {
     id: string;
     frozenSandbox: SandBox;
+    frozenCtx?: Context;
     code: string;
     cmd: string;
     extentNode?: NonTextNode;

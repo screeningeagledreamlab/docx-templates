@@ -25,5 +25,5 @@ export declare function splitCommand(cmd: string): {
  * This should be called after template walking completes but before XML generation.
  * Updates ctx.images with the resolved image data and updates XML node dimensions.
  */
-export declare function resolvePendingImages(ctx: Context, concurrency?: number): Promise<void>;
+export declare function resolvePendingImages(ctx: Context, concurrency?: number): Promise<Error[]>;
 export {};
