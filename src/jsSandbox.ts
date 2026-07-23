@@ -17,7 +17,8 @@ export async function runUserJsAndGetRaw(
   data: ReportData | undefined,
   code: string,
   ctx: Context,
-  sandboxOverride?: SandBox
+  sandboxOverride?: SandBox,
+  frozenCtx?: Context
 ): Promise<any> {
   // Retrieve the current JS sandbox contents (if any) and add
   // the code to be run, and a placeholder for the result,
@@ -52,7 +53,9 @@ export async function runUserJsAndGetRaw(
   let result;
   try {
     if (ctx.options.runJs) {
-      const temp = ctx.options.runJs({ sandbox, ctx });
+      // When a frozenCtx is provided (parallel image mode), pass it to runJs
+      // so the user's custom runner sees correct walk-time vars/loops state
+      const temp = ctx.options.runJs({ sandbox, ctx: frozenCtx ?? ctx });
       context = temp.modifiedSandbox;
       result = await temp.result;
     } else if (ctx.options.noSandbox) {

@@ -819,6 +819,16 @@ const processCmd: CommandProcessor = async (
           pendingDownload.frozenSandbox = frozenSandbox;
           pendingDownload.code = cmdRest;
 
+          // Snapshot ctx for runJs compatibility: shallow copy with frozen
+          // vars and loops so runJs sees correct walk-time state
+          if (ctx.options.runJs) {
+            pendingDownload.frozenCtx = {
+              ...ctx,
+              vars: { ...ctx.vars },
+              loops: ctx.loops.map(l => ({ ...l })),
+            };
+          }
+
           // Store the pending download for later resolution
           ctx.pendingImageDownloads.push(pendingDownload);
         } else {
@@ -1345,7 +1355,7 @@ export async function resolvePendingImages(
   // Execute evaluations with concurrency control — each uses its own frozen sandbox
   const results = await Promise.allSettled(
     pendingDownloads.map(pd =>
-      limit(() => runUserJsAndGetRaw(undefined, pd.code, ctx, pd.frozenSandbox))
+      limit(() => runUserJsAndGetRaw(undefined, pd.code, ctx, pd.frozenSandbox, pd.frozenCtx))
     )
   );
 

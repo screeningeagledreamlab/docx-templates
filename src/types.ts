@@ -235,6 +235,7 @@ export type Context = {
 export type PendingImageDownload = {
   id: string; // The image relId (e.g., 'img1')
   frozenSandbox: SandBox; // Pre-built sandbox with vars/loop state baked in
+  frozenCtx?: Context; // Shallow copy of ctx with snapshotted vars/loops for runJs
   code: string; // JS expression to evaluate (cmdRest)
   cmd: string; // Original command for error reporting
   // References to XML nodes that need dimension updates after resolution
