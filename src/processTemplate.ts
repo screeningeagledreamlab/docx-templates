@@ -823,7 +823,10 @@ const processCmd: CommandProcessor = async (
 
           // Snapshot ctx for runJs compatibility: deep-clone vars (same as
           // frozenSandbox) and shallow-copy loops so runJs sees correct
-          // walk-time state without cross-iteration object mutation leakage
+          // walk-time state without cross-iteration object mutation leakage.
+          // Note: other ctx fields (buffers, images, pIfCheckMap, etc.) are
+          // shared refs but are effectively idle post-walk; only vars and
+          // loops matter for expression evaluation.
           if (ctx.options.runJs) {
             const frozenVars: Record<string, unknown> = {};
             for (const k of Object.keys(ctx.vars)) {
