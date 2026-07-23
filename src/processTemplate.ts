@@ -1339,6 +1339,17 @@ const applyImageData = (
   }
 };
 
+// Remove an orphaned placeholder drawing node from the output tree.
+// Called when a parallel IMAGE expression fails or returns null.
+function removeDrawingNode(pending: PendingImageDownload): void {
+  const node = pending.drawingNode;
+  if (node?._parent) {
+    const siblings = node._parent._children;
+    const idx = siblings.indexOf(node);
+    if (idx >= 0) siblings.splice(idx, 1);
+  }
+}
+
 /**
  * Resolve all pending image downloads in parallel with concurrency control.
  * This should be called after template walking completes but before XML generation.
@@ -1380,6 +1391,8 @@ export async function resolvePendingImages(
     const pending = pendingDownloads[i];
 
     if (result.status === 'rejected') {
+      // Remove orphaned placeholder node from the output tree
+      removeDrawingNode(pending);
       const error = result.reason;
       const imgError = new ImageError(
         error instanceof Error ? error : new Error(String(error)),
@@ -1396,7 +1409,11 @@ export async function resolvePendingImages(
     }
 
     const imagePars = result.value;
-    if (imagePars == null) continue;
+    if (imagePars == null) {
+      // Expression returned null — no image to insert; remove placeholder
+      removeDrawingNode(pending);
+      continue;
+    }
 
     try {
       applyImageData(ctx, imagePars, pending);
