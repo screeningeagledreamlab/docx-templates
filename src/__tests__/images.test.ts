@@ -907,3 +907,170 @@ describe('parallel image mutable var leakage bug', () => {
     expect(receivedIndices).toEqual([0, 1, 2]);
   });
 });
+
+// ============================================================
+// Parallel image mode: error handling and edge cases
+// ============================================================
+describe('parallel image error handling and edge cases', () => {
+  const samplePng = fs.readFileSync(
+    path.join(__dirname, 'fixtures', 'sample.png')
+  );
+
+  let simpleTemplate: Buffer;
+  beforeAll(async () => {
+    simpleTemplate = await fs.promises.readFile(
+      path.join(__dirname, 'fixtures', 'imageSimple.docx')
+    );
+  });
+
+  it('imageConcurrency: 1 produces valid output (sequential via p-limit)', async () => {
+    const report = await createReport({
+      template: simpleTemplate,
+      data: {},
+      additionalJsContext: {
+        injectImg: () => ({
+          width: 6,
+          height: 6,
+          data: samplePng,
+          extension: '.png' as const,
+        }),
+      },
+      imageConcurrency: 1,
+    });
+    expect(report).toBeInstanceOf(Uint8Array);
+  });
+
+  it('imageConcurrency: 0 throws a validation error', async () => {
+    await expect(
+      createReport({
+        template: simpleTemplate,
+        data: {},
+        additionalJsContext: {
+          injectImg: () => ({
+            width: 6,
+            height: 6,
+            data: samplePng,
+            extension: '.png' as const,
+          }),
+        },
+        imageConcurrency: 0,
+      })
+    ).rejects.toThrow('imageConcurrency must be >= 1');
+  });
+
+  it('parallel mode propagates errors when failFast is true (default)', async () => {
+    await expect(
+      createReport({
+        template: simpleTemplate,
+        data: {},
+        additionalJsContext: {
+          injectImg: () => {
+            throw new Error('image download failed');
+          },
+        },
+        imageConcurrency: 5,
+      })
+    ).rejects.toThrow('image download failed');
+  });
+
+  it('parallel mode collects errors when failFast is false and no errorHandler', async () => {
+    await expect(
+      createReport({
+        template: simpleTemplate,
+        data: {},
+        additionalJsContext: {
+          injectImg: () => {
+            throw new Error('image download failed');
+          },
+        },
+        imageConcurrency: 5,
+        failFast: false,
+      })
+    ).rejects.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ message: expect.stringContaining('image download failed') }),
+      ])
+    );
+  });
+
+  it('parallel mode calls errorHandler on failure', async () => {
+    const handledErrors: Error[] = [];
+    const report = await createReport({
+      template: simpleTemplate,
+      data: {},
+      additionalJsContext: {
+        injectImg: () => {
+          throw new Error('image download failed');
+        },
+      },
+      imageConcurrency: 5,
+      errorHandler: (e: Error) => {
+        handledErrors.push(e);
+      },
+    });
+    expect(report).toBeInstanceOf(Uint8Array);
+    expect(handledErrors.length).toBe(1);
+    expect(handledErrors[0].message).toContain('image download failed');
+  });
+
+  it('parallel mode handles SVG images correctly', async () => {
+    const svgTemplate = await fs.promises.readFile(
+      path.join(__dirname, 'fixtures', 'imagesSVG.docx')
+    );
+    const svgData = await fs.promises.readFile(
+      path.join(__dirname, 'fixtures', 'sample.svg')
+    );
+
+    const report = await createReport({
+      template: svgTemplate,
+      data: {},
+      additionalJsContext: {
+        svgImgFile: () => ({
+          width: 6,
+          height: 6,
+          data: svgData,
+          extension: '.svg' as const,
+        }),
+        svgImgStr: () => ({
+          width: 6,
+          height: 6,
+          data: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><rect width="100" height="100"/></svg>'),
+          extension: '.svg' as const,
+        }),
+      },
+      imageConcurrency: 5,
+    });
+    expect(report).toBeInstanceOf(Uint8Array);
+
+    // Verify the output contains SVG-related XML structures
+    const zip = await JSZip.loadAsync(report);
+    const doc = await zip.file('word/document.xml')?.async('string');
+    expect(doc).toContain('asvg:svgBlip');
+  });
+
+  it('parallel mode handles image captions', async () => {
+    const captionTemplate = await fs.promises.readFile(
+      path.join(__dirname, 'fixtures', 'imageCaption.docx')
+    );
+
+    const report = await createReport({
+      template: captionTemplate,
+      data: {},
+      additionalJsContext: {
+        injectImg: () => ({
+          width: 6,
+          height: 6,
+          data: samplePng,
+          extension: '.png' as const,
+          caption: 'My Caption',
+        }),
+      },
+      imageConcurrency: 5,
+    });
+    expect(report).toBeInstanceOf(Uint8Array);
+
+    const zip = await JSZip.loadAsync(report);
+    const doc = await zip.file('word/document.xml')?.async('string');
+    expect(doc).toContain('My Caption');
+  });
+});
