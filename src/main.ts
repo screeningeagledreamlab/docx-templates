@@ -172,9 +172,10 @@ async function createReport(
   };
   if (
     createOptions.imageConcurrency != null &&
-    createOptions.imageConcurrency < 1
+    (!Number.isInteger(createOptions.imageConcurrency) ||
+      createOptions.imageConcurrency < 1)
   ) {
-    throw new Error('imageConcurrency must be >= 1');
+    throw new Error('imageConcurrency must be a positive integer');
   }
   const xmlOptions = {
     literalXmlDelimiter,

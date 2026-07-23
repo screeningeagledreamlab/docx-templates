@@ -955,7 +955,7 @@ describe('parallel image error handling and edge cases', () => {
         },
         imageConcurrency: 0,
       })
-    ).rejects.toThrow('imageConcurrency must be >= 1');
+    ).rejects.toThrow('imageConcurrency must be a positive integer');
   });
 
   it('parallel mode propagates errors when failFast is true (default)', async () => {
