@@ -1077,4 +1077,21 @@ describe('parallel image error handling and edge cases', () => {
     const doc = await zip.file('word/document.xml')?.async('string');
     expect(doc).toContain('My Caption');
   });
+
+  it('parallel mode removes placeholder when image expression returns null', async () => {
+    const report = await createReport({
+      template: simpleTemplate,
+      data: {},
+      additionalJsContext: {
+        injectImg: () => null,
+      },
+      imageConcurrency: 5,
+    });
+    expect(report).toBeInstanceOf(Uint8Array);
+
+    const zip = await JSZip.loadAsync(report);
+    const doc = await zip.file('word/document.xml')?.async('string');
+    // The placeholder drawing node should have been removed
+    expect(doc).not.toContain('<w:drawing');
+  });
 });
