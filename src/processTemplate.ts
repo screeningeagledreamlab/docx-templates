@@ -55,16 +55,27 @@ function isPlainObject(val: object): val is Record<string, unknown> {
   );
 }
 
-function cloneVal(val: unknown, seen = new WeakSet()): unknown {
+function cloneVal(val: unknown, seen = new Map<object, object>()): unknown {
   if (val == null || typeof val !== 'object') return val;
-  if (seen.has(val as object)) return val; // circular ref: keep original
-  seen.add(val as object);
-  if (Array.isArray(val)) return val.map(v => cloneVal(v, seen));
+  const obj = val as object;
+  if (seen.has(obj)) return seen.get(obj);
+
+  if (Array.isArray(val)) {
+    const arr: unknown[] = [];
+    seen.set(obj, arr);
+    for (let i = 0; i < val.length; i++) arr.push(cloneVal(val[i], seen));
+
+    return arr;
+  }
+
   if (!isPlainObject(val)) return val;
+
   const out: Record<string, unknown> = {};
+  seen.set(obj, out);
   for (const k of Object.keys(val as Record<string, unknown>)) {
     out[k] = cloneVal((val as Record<string, unknown>)[k], seen);
   }
+
   return out;
 }
 
