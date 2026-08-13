@@ -1384,18 +1384,35 @@ export async function resolvePendingImages(
   // Create a concurrency limiter
   const limit = pLimit(concurrency);
 
-  // Execute evaluations with concurrency control — each uses its own frozen sandbox
+  // Execute evaluations with concurrency control — each uses its own frozen sandbox.
+  // In fail-fast mode (failFast enabled, no errorHandler), stop launching queued
+  // evaluations as soon as one fails: in-flight evaluations (at most `concurrency`)
+  // still settle — promises cannot be cancelled — but the remaining queued ones are
+  // skipped. p-limit starts tasks in document order, so skipped evaluations are
+  // always after the first failure; the error reported below is unaffected.
+  const failFastEager =
+    ctx.options.failFast && ctx.options.errorHandler == null;
+  let abortQueued = false;
   const results = await Promise.allSettled(
     pendingDownloads.map(pd =>
-      limit(() =>
-        runUserJsAndGetRaw(
-          undefined,
-          pd.code,
-          ctx,
-          pd.frozenSandbox,
-          pd.frozenCtx
-        )
-      )
+      limit(async () => {
+        // Skipped evaluations resolve to undefined. The loop below throws at the
+        // failed result (always earlier in document order) before reaching them,
+        // so the whole report is discarded and their placeholders never ship.
+        if (abortQueued) return undefined;
+        try {
+          return await runUserJsAndGetRaw(
+            undefined,
+            pd.code,
+            ctx,
+            pd.frozenSandbox,
+            pd.frozenCtx
+          );
+        } catch (e) {
+          if (failFastEager) abortQueued = true;
+          throw e;
+        }
+      })
     )
   );
 
