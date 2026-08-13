@@ -973,6 +973,61 @@ describe('parallel image error handling and edge cases', () => {
     ).rejects.toThrow('image download failed');
   });
 
+  it('parallel mode fail-fast skips queued image evaluations after a failure', async () => {
+    const template = await fs.promises.readFile(
+      path.join(__dirname, 'fixtures', 'stress_test_template.docx')
+    );
+    const images = Array.from({ length: 20 }, (_, i) => i);
+    let calls = 0;
+    await expect(
+      createReport({
+        template,
+        data: { images },
+        additionalJsContext: {
+          getImage: async () => {
+            calls += 1;
+            throw new Error('image download failed');
+          },
+        },
+        cmdDelimiter: ['{{', '}}'],
+        imageConcurrency: 1,
+      })
+    ).rejects.toThrow('image download failed');
+    // With concurrency 1 and fail-fast, only the first evaluation runs;
+    // the remaining 19 queued evaluations are skipped.
+    expect(calls).toBe(1);
+  });
+
+  it('parallel mode fail-fast disabled still evaluates all images', async () => {
+    const template = await fs.promises.readFile(
+      path.join(__dirname, 'fixtures', 'stress_test_template.docx')
+    );
+    const images = Array.from({ length: 20 }, (_, i) => i);
+    let calls = 0;
+    await expect(
+      createReport({
+        template,
+        data: { images },
+        additionalJsContext: {
+          getImage: async () => {
+            calls += 1;
+            throw new Error('image download failed');
+          },
+        },
+        cmdDelimiter: ['{{', '}}'],
+        imageConcurrency: 1,
+        failFast: false,
+      })
+    ).rejects.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: expect.stringContaining('image download failed'),
+        }),
+      ])
+    );
+    expect(calls).toBe(20);
+  });
+
   it('parallel mode collects errors when failFast is false and no errorHandler', async () => {
     await expect(
       createReport({
