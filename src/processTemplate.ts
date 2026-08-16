@@ -42,10 +42,17 @@ import pLimit from 'p-limit';
 // Default concurrency limit for parallel image downloads
 const DEFAULT_IMAGE_CONCURRENCY = 10;
 
-// Deep-clone plain objects and arrays; return primitives and non-plain values
-// (functions, Buffers, Dates, etc.) as-is. Handles VM-created objects whose
-// constructor differs from the host Object by checking constructor.name,
-// and also handles null-prototype objects (Object.create(null)).
+// Deep-clone plain objects, arrays, and the built-in mutable containers
+// Map, Set and Date; return primitives and all other non-plain values
+// (functions, Buffers, class instances, etc.) as-is. Frozen sandboxes built
+// for deferred (parallel) image evaluation snapshot vars/EXEC state through
+// this function, so anything returned by reference here is shared across
+// loop iterations — mutating such a value from EXEC inside a loop leaks the
+// final iteration's state into every deferred IMAGE evaluation.
+// Detection uses Object.prototype.toString tags (and constructor.name for
+// plain objects) rather than instanceof, because values created inside the
+// vm sandbox come from a different realm with different constructors.
+// Null-prototype objects (Object.create(null)) are treated as plain.
 function isPlainObject(val: object): val is Record<string, unknown> {
   const proto = Object.getPrototypeOf(val);
   return (
@@ -55,7 +62,10 @@ function isPlainObject(val: object): val is Record<string, unknown> {
   );
 }
 
-function cloneVal(val: unknown, seen = new Map<object, object>()): unknown {
+export function cloneVal(
+  val: unknown,
+  seen = new Map<object, object>()
+): unknown {
   if (val == null || typeof val !== 'object') return val;
   const obj = val as object;
   if (seen.has(obj)) return seen.get(obj);
@@ -66,6 +76,25 @@ function cloneVal(val: unknown, seen = new Map<object, object>()): unknown {
     for (let i = 0; i < val.length; i++) arr.push(cloneVal(val[i], seen));
 
     return arr;
+  }
+
+  const tag = Object.prototype.toString.call(val);
+  if (tag === '[object Date]') {
+    return new Date((val as Date).getTime());
+  }
+  if (tag === '[object Map]') {
+    const map = new Map<unknown, unknown>();
+    seen.set(obj, map);
+    (val as Map<unknown, unknown>).forEach((v, k) =>
+      map.set(cloneVal(k, seen), cloneVal(v, seen))
+    );
+    return map;
+  }
+  if (tag === '[object Set]') {
+    const set = new Set<unknown>();
+    seen.set(obj, set);
+    (val as Set<unknown>).forEach(v => set.add(cloneVal(v, seen)));
+    return set;
   }
 
   if (!isPlainObject(val)) return val;

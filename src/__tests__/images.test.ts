@@ -908,6 +908,78 @@ describe('parallel image mutable var leakage bug', () => {
   });
 });
 
+// Same leakage class as above, but through a non-plain container: a Map
+// mutated via EXEC is shared by reference across frozen sandboxes unless
+// cloneVal clones it.
+describe('parallel image Map var leakage bug', () => {
+  // Template structure (map_var_image_template.docx):
+  //   {{! $state = new Map(); }}
+  //   {{FOR row in rows}}
+  //     {{! $state.set('id', $row); }}
+  //     {{IMAGE getImage($state.get('id'))}}
+  //   {{END-FOR row}}
+
+  const samplePng = fs.readFileSync(
+    path.join(__dirname, 'fixtures', 'sample.png')
+  );
+
+  const rows = [0, 1, 2];
+
+  let template: Buffer;
+  beforeAll(async () => {
+    template = await fs.promises.readFile(
+      path.join(__dirname, 'fixtures', 'map_var_image_template.docx')
+    );
+  });
+
+  const makeGetImage = (receivedIds: number[]) => (id: number) => {
+    receivedIds.push(id);
+    return {
+      width: 2,
+      height: 2,
+      data: samplePng,
+      extension: '.png' as const,
+    };
+  };
+
+  it('inline mode passes correct Map state to each getImage call', async () => {
+    const receivedIds: number[] = [];
+    const report = await createReport({
+      template,
+      data: { rows },
+      additionalJsContext: { getImage: makeGetImage(receivedIds) },
+      cmdDelimiter: ['{{', '}}'],
+    });
+
+    expect(report).toBeInstanceOf(Uint8Array);
+    expect(receivedIds).toEqual([0, 1, 2]);
+  });
+
+  it('parallel mode passes correct Map state to each getImage call', async () => {
+    const receivedIds: number[] = [];
+    const report = await createReport({
+      template,
+      data: { rows },
+      additionalJsContext: { getImage: makeGetImage(receivedIds) },
+      cmdDelimiter: ['{{', '}}'],
+      imageConcurrency: 5,
+    });
+
+    expect(report).toBeInstanceOf(Uint8Array);
+    // The Map created via EXEC in the vm sandbox must be cloned per frozen
+    // sandbox; otherwise all deferred evaluations see the final iteration's
+    // state and this yields [2, 2, 2]
+    expect(receivedIds.sort()).toEqual([0, 1, 2]);
+  });
+
+  // Note: noSandbox mode is not covered here. With noSandbox, EXEC
+  // assignments to undeclared $vars land on the host global object (via
+  // `with(this) { eval(...) }`), never entering ctx.jsSandbox, so frozen
+  // sandboxes cannot snapshot them — parallel mode leaks final-iteration
+  // state for ANY var type (plain objects included). That is a separate
+  // defect in the noSandbox eval writeback, not addressable by cloneVal.
+});
+
 // ============================================================
 // Parallel image mode: error handling and edge cases
 // ============================================================

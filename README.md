@@ -9,7 +9,7 @@ Template-based docx report creation for both Node and the browser.
 This fork includes the following enhancements over the original library:
 
 ### New Features
-- **Asynchronous image downloading** - Images are now downloaded concurrently, significantly speeding up report generation when templates contain multiple images
+- **Asynchronous image downloading** - Images are now downloaded concurrently (opt-in via the `imageConcurrency` option), significantly speeding up report generation when templates contain multiple images. See the option's documentation below for state-snapshotting semantics inside FOR loops
 - **`allowNestedIf` option** - New configuration option that allows nested IF commands within the same paragraph or table row (disabled by default for backwards compatibility)
 
 ### Bug Fixes
@@ -191,6 +191,24 @@ const report = await createReport({
    * (Default: false)
    */
   allowNestedIf?: boolean;
+  /**
+   * Maximum number of concurrent image downloads. When set, enables parallel
+   * image processing: IMAGE commands are collected during template walking
+   * and their expressions are evaluated concurrently at the end, which speeds
+   * up templates whose images are fetched from URLs or otherwise expensive to
+   * produce. When not set (default), images are processed one at a time,
+   * inline during template walking.
+   *
+   * Each deferred IMAGE snapshots the template state at its position, so
+   * expressions see per-iteration values inside FOR loops. Plain objects,
+   * arrays, Map, Set and Date are deep-cloned into that snapshot; class
+   * instances, functions and Buffers are shared by reference. Avoid mutating
+   * shared-by-reference values from EXEC inside loops in parallel mode: all
+   * deferred IMAGE evaluations would see the final iteration's state. The
+   * same applies to ALL $vars assigned from EXEC when combined with
+   * `noSandbox` (they cannot be snapshotted outside the sandbox).
+   */
+  imageConcurrency?: number;
 });
 ```
 
