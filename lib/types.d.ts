@@ -142,6 +142,17 @@ export type UserOptions = {
      * are collected during template walking and resolved in parallel at the end.
      * When not set (default), images are processed inline during template walking.
      * Parallel mode is useful for templates with many images that do processings. eg: fetch from URLs, rotating.
+     *
+     * In parallel mode, each IMAGE command snapshots the template state (vars
+     * and EXEC-created sandbox values) at its position in the template, so
+     * expressions see per-iteration values inside FOR loops. Plain objects,
+     * arrays, Map, Set and Date are deep-cloned into the snapshot; class
+     * instances, functions and Buffers are shared by reference — avoid mutating
+     * such values from EXEC inside loops when using parallel mode, as all
+     * deferred IMAGE evaluations would see the final iteration's state.
+     * With `noSandbox`, $vars assigned from EXEC cannot be snapshotted at all
+     * (they live outside the sandbox), so the same final-iteration caveat
+     * applies to every var type in that mode.
      */
     imageConcurrency?: number;
 };
