@@ -1541,11 +1541,24 @@ const processImage = (ctx: Context, imagePars: ImagePars) => {
   const id = String(ctx.imageAndShapeIdIncrement);
   const relId = `img${id}`;
 
-  // Build placeholder XML structure (shared with parallel path)
+  // Build placeholder XML structure (shared with parallel path).
+  // NOTE: this publishes ctx.pendingImageNode, which walkTemplate splices into
+  // the output tree when it leaves the enclosing w:t.
   const pending = buildPendingImageNode(ctx, relId, id, '');
 
   // Apply resolved data immediately (dimensions, alt text, rotation, SVG handling, storage)
-  applyImageData(ctx, imagePars, pending);
+  try {
+    applyImageData(ctx, imagePars, pending);
+  } catch (e) {
+    // Validation failed after the placeholder was published. Discard it, otherwise
+    // the walk splices in an orphaned zero-dimension <w:drawing> whose r:embed
+    // points at an image that never makes it into the ZIP — a dangling
+    // relationship that Word reports as a damaged file. The parallel path does
+    // the equivalent via removeDrawingNode(). The node is not in the tree yet,
+    // so dropping the reference is enough.
+    delete ctx.pendingImageNode;
+    throw e;
+  }
 
   // Handle caption (inline mode uses ctx.pendingImageNode)
   if (imagePars.caption) {
