@@ -1205,6 +1205,73 @@ describe('parallel image error handling and edge cases', () => {
     expect(doc).toContain('My Caption');
   });
 
+  // Regression test for SE-16507-CR-18.
+  // The inline path reports image errors through processCmd's catch, which calls
+  // errorHandler(err, cmdRest) -- the bare expression. The parallel path passed
+  // the whole command including the "IMAGE " keyword, so a handler that switches
+  // on the command string behaved differently depending on the mode.
+  it('passes the same command string to errorHandler in inline and parallel modes', async () => {
+    const run = async (imageConcurrency?: number) => {
+      const commands: (string | undefined)[] = [];
+      await createReport({
+        template: simpleTemplate,
+        data: {},
+        additionalJsContext: {
+          // `extension` is missing -> validateImage throws inside applyImageData.
+          // An expression that *throws* is handled inside jsSandbox identically in
+          // both modes; it is the invalid-image-data path that diverges.
+          injectImg: () => ({ width: 6, height: 6, data: samplePng }),
+        },
+        errorHandler: (_e: Error, command?: string) => {
+          commands.push(command);
+        },
+        ...(imageConcurrency != null ? { imageConcurrency } : {}),
+      });
+      return commands;
+    };
+    const inline = await run();
+    const parallel = await run(4);
+    expect(inline).toEqual(['injectImg()']);
+    expect(parallel).toEqual(inline);
+  });
+
+  // Regression test for SE-16507-CR-26.
+  // cloneVal's cycle-detection map was created fresh per top-level call, so two
+  // sandbox entries referencing the same object became two unrelated copies.
+  // Template: EXEC $list = rows; EXEC $head = $list[0]; IMAGE getImage($list, $head)
+  // $head is an element of $list, so $list.indexOf($head) must find it.
+  it('parallel mode preserves aliasing between two sandbox values', async () => {
+    const template = await fs.promises.readFile(
+      path.join(__dirname, 'fixtures', 'sandbox_alias_image_template.docx')
+    );
+    const rows = [{ sku: 'A1' }, { sku: 'B2' }, { sku: 'C3' }];
+
+    const run = async (imageConcurrency?: number) => {
+      const found: number[] = [];
+      await createReport({
+        template,
+        data: { rows },
+        additionalJsContext: {
+          getImage: (list: any[], head: any) => {
+            found.push(list.indexOf(head));
+            return {
+              width: 2,
+              height: 2,
+              data: samplePng,
+              extension: '.png' as const,
+            };
+          },
+        },
+        cmdDelimiter: ['{{', '}}'] as [string, string],
+        ...(imageConcurrency != null ? { imageConcurrency } : {}),
+      });
+      return found;
+    };
+
+    expect(await run()).toEqual([0, 0, 0]);
+    expect(await run(4)).toEqual([0, 0, 0]);
+  });
+
   // Regression test for SE-16507-CR-24.
   // Loop variables are reassigned each iteration, never mutated in place, so they
   // do not need deep cloning into the frozen sandbox. Cloning them anyway means
