@@ -200,13 +200,14 @@ const report = await createReport({
    * inline during template walking.
    *
    * Each deferred IMAGE snapshots the template state at its position, so
-   * expressions see per-iteration values inside FOR loops. Plain objects,
-   * arrays, Map, Set and Date are deep-cloned into that snapshot; class
-   * instances, functions and Buffers are shared by reference. Avoid mutating
-   * shared-by-reference values from EXEC inside loops in parallel mode: all
-   * deferred IMAGE evaluations would see the final iteration's state. The
-   * same applies to ALL $vars assigned from EXEC when combined with
-   * `noSandbox` (they cannot be snapshotted outside the sandbox).
+   * expressions see per-iteration values inside FOR loops. Deep-cloned into
+   * that snapshot: $vars and EXEC-created values that are plain objects,
+   * arrays, Map, Set or Date. Shared by reference across all deferred
+   * evaluations: anything reached through `data` or `additionalJsContext`
+   * (whatever its type), class instances, functions and Buffers, and — under
+   * `noSandbox` — every $var assigned from EXEC. Do not mutate a
+   * shared-by-reference value from EXEC inside a loop in parallel mode: all
+   * deferred IMAGE evaluations would see the final iteration's state.
    */
   imageConcurrency?: number;
 });

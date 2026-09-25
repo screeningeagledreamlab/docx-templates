@@ -832,19 +832,29 @@ const processCmd: CommandProcessor = async (
           // Each pending download gets its own independent sandbox, so concurrent
           // evaluation in resolvePendingImages needs no shared ctx mutation.
           //
-          // Deep-clone jsSandbox and vars to avoid cross-iteration leakage when
-          // EXEC mutates object properties (e.g. $config.index = $row). Without
-          // cloning, all frozen sandboxes share the same object references and
-          // see the final iteration's values. Data and additionalJsContext are
-          // NOT cloned — data is read-only by convention, and additionalJsContext
-          // contains functions that cannot be cloned.
-          // Clone jsSandbox per-key so plain objects get independent copies
-          // while functions (from additionalJsContext) keep their references.
+          // Deep-clone EXEC-created sandbox values and vars to avoid
+          // cross-iteration leakage when EXEC mutates object properties
+          // (e.g. config.index = $row). Without cloning, all frozen sandboxes
+          // share the same object references and see the final iteration's
+          // values.
+          //
+          // Keys coming from data / additionalJsContext are deliberately NOT
+          // cloned: they are spread in below at a higher priority (matching the
+          // order in runUserJsAndGetRaw), so cloning them here would only build
+          // a copy that the spread immediately discards. Skipping them also
+          // keeps additionalJsContext functions at their original references.
+          // Note this means objects reached through data are SHARED across all
+          // deferred evaluations — see the imageConcurrency docs in types.ts.
+          const shadowedKeys = new Set([
+            ...Object.keys(data ?? {}),
+            ...Object.keys(ctx.options.additionalJsContext ?? {}),
+          ]);
           const clonedSandbox: SandBox = {
             __code__: undefined,
             __result__: undefined,
           };
           for (const k of Object.keys(ctx.jsSandbox || {})) {
+            if (shadowedKeys.has(k)) continue;
             clonedSandbox[k] = cloneVal((ctx.jsSandbox as SandBox)[k]);
           }
           const frozenSandbox: SandBox = {
@@ -854,24 +864,27 @@ const processCmd: CommandProcessor = async (
           };
           const curLoop = getCurLoop(ctx);
           if (curLoop) frozenSandbox.$idx = curLoop.idx;
-          Object.keys(ctx.vars).forEach(varName => {
-            frozenSandbox[`$${varName}`] = cloneVal(ctx.vars[varName]);
-          });
+
+          // Clone vars once and share the result between frozenSandbox and
+          // frozenCtx: both are read by the same deferred evaluation, so no
+          // aliasing is introduced between separate pending images (each still
+          // gets its own frozenVars).
+          const frozenVars: Record<string, unknown> = {};
+          for (const k of Object.keys(ctx.vars)) {
+            frozenVars[k] = cloneVal(ctx.vars[k]);
+            frozenSandbox[`$${k}`] = frozenVars[k];
+          }
 
           pendingDownload.frozenSandbox = frozenSandbox;
           pendingDownload.code = cmdRest;
 
-          // Snapshot ctx for runJs compatibility: deep-clone vars (same as
-          // frozenSandbox) and shallow-copy loops so runJs sees correct
-          // walk-time state without cross-iteration object mutation leakage.
+          // Snapshot ctx for runJs compatibility: reuse the deep-cloned vars
+          // and shallow-copy loops so runJs sees correct walk-time state
+          // without cross-iteration object mutation leakage.
           // Note: other ctx fields (buffers, images, pIfCheckMap, etc.) are
           // shared refs but are effectively idle post-walk; only vars and
           // loops matter for expression evaluation.
           if (ctx.options.runJs) {
-            const frozenVars: Record<string, unknown> = {};
-            for (const k of Object.keys(ctx.vars)) {
-              frozenVars[k] = cloneVal(ctx.vars[k]);
-            }
             pendingDownload.frozenCtx = {
               ...ctx,
               vars: frozenVars,
