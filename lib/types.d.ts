@@ -242,6 +242,7 @@ export type PendingImageDownload = {
     frozenCtx?: Context;
     code: string;
     cmd: string;
+    errorHandlerCommand?: string;
     extentNode?: NonTextNode;
     picExtNode?: NonTextNode;
     xfrmNode?: NonTextNode;
