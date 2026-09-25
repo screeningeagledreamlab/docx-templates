@@ -154,16 +154,24 @@ type UserOptions = {
      * When not set (default), images are processed inline during template walking.
      * Parallel mode is useful for templates with many images that do processings. eg: fetch from URLs, rotating.
      *
-     * In parallel mode, each IMAGE command snapshots the template state (vars
-     * and EXEC-created sandbox values) at its position in the template, so
-     * expressions see per-iteration values inside FOR loops. Plain objects,
-     * arrays, Map, Set and Date are deep-cloned into the snapshot; class
-     * instances, functions and Buffers are shared by reference — avoid mutating
-     * such values from EXEC inside loops when using parallel mode, as all
-     * deferred IMAGE evaluations would see the final iteration's state.
-     * With `noSandbox`, $vars assigned from EXEC cannot be snapshotted at all
-     * (they live outside the sandbox), so the same final-iteration caveat
-     * applies to every var type in that mode.
+     * In parallel mode, each IMAGE command snapshots the template state at its
+     * position in the template, so expressions see per-iteration values inside
+     * FOR loops.
+     *
+     * Deep-cloned into the snapshot: $vars (including loop vars) and
+     * EXEC-created sandbox values, when they are plain objects, arrays, Map,
+     * Set or Date.
+     *
+     * Shared by reference across every deferred IMAGE evaluation:
+     *  - anything reached through `data` or `additionalJsContext`, whatever its
+     *    type — these keep report-data priority and are never cloned;
+     *  - class instances, functions and Buffers, wherever they come from;
+     *  - with `noSandbox`, $vars assigned from EXEC (they live outside the
+     *    sandbox and cannot be captured at all).
+     *
+     * Do not mutate a shared-by-reference value from EXEC inside a FOR loop in
+     * parallel mode: every deferred IMAGE evaluation would see the final
+     * iteration's state. Assign per-iteration values to $vars instead.
      */
     imageConcurrency?: number;
 };
