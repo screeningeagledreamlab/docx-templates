@@ -145,22 +145,29 @@ export type UserOptions = {
      *
      * In parallel mode, each IMAGE command snapshots the template state at its
      * position in the template, so expressions see per-iteration values inside
-     * FOR loops.
+     * FOR loops. Two consequences are worth knowing before you rely on either.
      *
-     * Deep-cloned into the snapshot: $vars (including loop vars) and
-     * EXEC-created sandbox values, when they are plain objects, arrays, Map,
-     * Set or Date.
+     * 1. Values that are COPIED into the snapshot are no longer the same objects
+     *    as the originals. Reading them is always safe ($item.name, $item.id),
+     *    but identity checks against your own data — indexOf, ===, includes,
+     *    Set.has, Map.get / WeakMap.get keyed by data objects — will not match.
+     *    Compare by value instead (findIndex(x => x.id === $item.id)).
+     *    EXEC-created sandbox state is copied, so an object stashed there
+     *    (e.g. `EXEC $cfg.current = $item`) reaches the IMAGE expression as a
+     *    copy. $vars, including FOR loop variables, are NOT copied and do keep
+     *    their identity.
      *
-     * Shared by reference across every deferred IMAGE evaluation:
-     *  - anything reached through `data` or `additionalJsContext`, whatever its
-     *    type — these keep report-data priority and are never cloned;
-     *  - class instances, functions and Buffers, wherever they come from;
-     *  - with `noSandbox`, $vars assigned from EXEC (they live outside the
-     *    sandbox and cannot be captured at all).
+     * 2. Values that are SHARED by reference show their final state, not their
+     *    per-iteration state, because deferred expressions run after the walk.
+     *    Shared: anything reached through `data` or `additionalJsContext`,
+     *    whatever its type; class instances, functions and Buffers wherever they
+     *    come from; $vars (see above); and, with `noSandbox`, every $var
+     *    assigned from EXEC, which cannot be captured at all.
      *
-     * Do not mutate a shared-by-reference value from EXEC inside a FOR loop in
-     * parallel mode: every deferred IMAGE evaluation would see the final
-     * iteration's state. Assign per-iteration values to $vars instead.
+     * The practical rule: in parallel mode, treat `data` and everything reachable
+     * from it as read-only for the duration of the report. Mutating it from EXEC
+     * inside a FOR loop makes every deferred IMAGE evaluation see the last
+     * iteration's state.
      */
     imageConcurrency?: number;
 };
