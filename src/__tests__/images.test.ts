@@ -1205,6 +1205,45 @@ describe('parallel image error handling and edge cases', () => {
     expect(doc).toContain('My Caption');
   });
 
+  // Regression test for SE-16507-CR-24.
+  // Loop variables are reassigned each iteration, never mutated in place, so they
+  // do not need deep cloning into the frozen sandbox. Cloning them anyway means
+  // $row is no longer the object that lives in `data`, and identity lookups
+  // (indexOf / === / includes / Map.get) silently fail in parallel mode only.
+  it('parallel mode preserves loop variable identity with the data it came from', async () => {
+    const template = await fs.promises.readFile(
+      path.join(__dirname, 'fixtures', 'loop_var_identity_image_template.docx')
+    );
+    const rows = [{ sku: 'A1' }, { sku: 'B2' }, { sku: 'C3' }];
+
+    const run = async (imageConcurrency?: number) => {
+      const positions: number[] = [];
+      await createReport({
+        template,
+        data: { rows },
+        additionalJsContext: {
+          // asks "which row is this?" by identity, exactly as a caller would
+          getImage: (row: any) => {
+            positions.push(rows.indexOf(row));
+            return {
+              width: 2,
+              height: 2,
+              data: samplePng,
+              extension: '.png' as const,
+            };
+          },
+        },
+        cmdDelimiter: ['{{', '}}'] as [string, string],
+        ...(imageConcurrency != null ? { imageConcurrency } : {}),
+      });
+      return positions;
+    };
+
+    // Sequential is the reference behaviour; parallel must match it.
+    expect(await run()).toEqual([0, 1, 2]);
+    expect(await run(4)).toEqual([0, 1, 2]);
+  });
+
   // Regression test for SE-16507-CR-17.
   // `processImage` publishes the placeholder node (via buildPendingImageNode) BEFORE
   // applyImageData validates the image, so a validation failure leaves an orphaned
