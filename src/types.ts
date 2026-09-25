@@ -264,6 +264,9 @@ export type PendingImageDownload = {
   frozenCtx?: Context; // Shallow copy of ctx with snapshotted vars/loops for runJs
   code: string; // JS expression to evaluate (cmdRest)
   cmd: string; // Original command for error reporting
+  // Bare expression (cmdRest) handed to a user errorHandler, so it matches what
+  // the inline path passes. `cmd` stays the full command for ImageError text.
+  errorHandlerCommand?: string;
   // References to XML nodes that need dimension updates after resolution
   extentNode?: NonTextNode; // wp:extent node
   picExtNode?: NonTextNode; // a:ext node inside pic:spPr

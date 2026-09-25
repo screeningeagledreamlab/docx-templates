@@ -849,13 +849,20 @@ const processCmd: CommandProcessor = async (
             ...Object.keys(data ?? {}),
             ...Object.keys(ctx.options.additionalJsContext ?? {}),
           ]);
+          // Share one `seen` map across every clone taken for THIS pending image,
+          // so two sandbox entries that reference the same object stay aliased in
+          // the snapshot (e.g. `EXEC $list = rows; $head = $list[0]` must keep
+          // $list.indexOf($head) === 0). A per-call map would clone them twice
+          // into unrelated copies. Each pending image still gets its own map, so
+          // no aliasing is introduced between separate images.
+          const seen = new Map<object, object>();
           const clonedSandbox: SandBox = {
             __code__: undefined,
             __result__: undefined,
           };
           for (const k of Object.keys(ctx.jsSandbox || {})) {
             if (shadowedKeys.has(k)) continue;
-            clonedSandbox[k] = cloneVal((ctx.jsSandbox as SandBox)[k]);
+            clonedSandbox[k] = cloneVal((ctx.jsSandbox as SandBox)[k], seen);
           }
           const frozenSandbox: SandBox = {
             ...clonedSandbox,
@@ -884,6 +891,10 @@ const processCmd: CommandProcessor = async (
 
           pendingDownload.frozenSandbox = frozenSandbox;
           pendingDownload.code = cmdRest;
+          // errorHandler receives the bare expression, matching what the inline
+          // path passes from processCmd's catch. `cmd` keeps the full command
+          // for ImageError messages.
+          pendingDownload.errorHandlerCommand = cmdRest;
 
           // Snapshot ctx for runJs compatibility: reuse the deep-cloned vars
           // and shallow-copy loops so runJs sees correct walk-time state
@@ -1479,7 +1490,10 @@ export async function resolvePendingImages(
         pending.cmd
       );
       if (ctx.options.errorHandler != null) {
-        await ctx.options.errorHandler(imgError, pending.cmd);
+        await ctx.options.errorHandler(
+          imgError,
+          pending.errorHandlerCommand ?? pending.cmd
+        );
       } else if (ctx.options.failFast) {
         throw imgError;
       } else {
@@ -1516,7 +1530,10 @@ export async function resolvePendingImages(
       if (!isError(e)) throw e;
       const imgError = new ImageError(e, pending.cmd);
       if (ctx.options.errorHandler != null) {
-        await ctx.options.errorHandler(imgError, pending.cmd);
+        await ctx.options.errorHandler(
+          imgError,
+          pending.errorHandlerCommand ?? pending.cmd
+        );
       } else if (ctx.options.failFast) {
         throw imgError;
       } else {
