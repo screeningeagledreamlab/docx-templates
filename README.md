@@ -200,14 +200,20 @@ const report = await createReport({
    * inline during template walking.
    *
    * Each deferred IMAGE snapshots the template state at its position, so
-   * expressions see per-iteration values inside FOR loops. Deep-cloned into
-   * that snapshot: $vars and EXEC-created values that are plain objects,
-   * arrays, Map, Set or Date. Shared by reference across all deferred
-   * evaluations: anything reached through `data` or `additionalJsContext`
-   * (whatever its type), class instances, functions and Buffers, and — under
-   * `noSandbox` — every $var assigned from EXEC. Do not mutate a
-   * shared-by-reference value from EXEC inside a loop in parallel mode: all
-   * deferred IMAGE evaluations would see the final iteration's state.
+   * expressions see per-iteration values inside FOR loops. Two caveats.
+   *
+   * Copied values are not the same objects as the originals, so identity
+   * checks against your own data (indexOf, ===, includes, Map.get keyed by
+   * data objects) will not match — compare by value instead. EXEC-created
+   * sandbox state is copied; $vars, including FOR loop variables, are not and
+   * do keep their identity.
+   *
+   * Shared values show their final state rather than their per-iteration
+   * state, because deferred expressions run after the walk. Shared: anything
+   * reached through `data` or `additionalJsContext`, class instances,
+   * functions and Buffers, $vars, and — under `noSandbox` — every $var
+   * assigned from EXEC. The practical rule: treat `data` as read-only for the
+   * duration of the report when using parallel mode.
    */
   imageConcurrency?: number;
 });
