@@ -1205,6 +1205,38 @@ describe('parallel image error handling and edge cases', () => {
     expect(doc).toContain('My Caption');
   });
 
+  // Regression test for SE-16507-CR-17.
+  // `processImage` publishes the placeholder node (via buildPendingImageNode) BEFORE
+  // applyImageData validates the image, so a validation failure leaves an orphaned
+  // <w:drawing> with zero dimensions and an r:embed pointing at an image that was
+  // never added to the ZIP. Word treats that dangling relationship as a corrupt file.
+  // Only reachable with a custom errorHandler, since that is the sole configuration
+  // in which a document is still produced after an image error.
+  it('inline mode removes the placeholder when image data is invalid and an errorHandler is set', async () => {
+    const handledErrors: Error[] = [];
+    const report = await createReport({
+      template: simpleTemplate,
+      data: {},
+      additionalJsContext: {
+        // `extension` is missing -> validateImage throws inside applyImageData
+        injectImg: () => ({ width: 6, height: 6, data: samplePng }),
+      },
+      // no imageConcurrency -> inline (default) path
+      errorHandler: (e: Error) => {
+        handledErrors.push(e);
+      },
+    });
+    expect(report).toBeInstanceOf(Uint8Array);
+    expect(handledErrors.length).toBe(1);
+
+    const zip = await JSZip.loadAsync(report);
+    const doc = await zip.file('word/document.xml')?.async('string');
+    // No orphaned placeholder...
+    expect(doc).not.toContain('<w:drawing');
+    // ...and no relationship reference to an image that was never written to the ZIP.
+    expect(doc).not.toMatch(/r:embed="img\d+"/);
+  });
+
   it('parallel mode removes placeholder when image expression returns null', async () => {
     const report = await createReport({
       template: simpleTemplate,
