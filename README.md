@@ -204,16 +204,17 @@ const report = await createReport({
    *
    * Copied values are not the same objects as the originals, so identity
    * checks against your own data (indexOf, ===, includes, Map.get keyed by
-   * data objects) will not match — compare by value instead. EXEC-created
-   * sandbox state is copied; $vars, including FOR loop variables, are not and
-   * do keep their identity.
+   * data objects) will not match — compare by value instead. Copied: $vars
+   * (including FOR loop variables) and EXEC-created sandbox state. Copying is
+   * what makes per-iteration state correct; losing identity is its unavoidable
+   * cost.
    *
    * Shared values show their final state rather than their per-iteration
    * state, because deferred expressions run after the walk. Shared: anything
    * reached through `data` or `additionalJsContext`, class instances,
-   * functions and Buffers, $vars, and — under `noSandbox` — every $var
-   * assigned from EXEC. The practical rule: treat `data` as read-only for the
-   * duration of the report when using parallel mode.
+   * functions and Buffers, and — under `noSandbox` — every $var assigned from
+   * EXEC. The practical rule: treat `data` as read-only for the duration of
+   * the report when using parallel mode.
    */
   imageConcurrency?: number;
 });
