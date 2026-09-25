@@ -1205,6 +1205,48 @@ describe('parallel image error handling and edge cases', () => {
     expect(doc).toContain('My Caption');
   });
 
+  // Regression test for SE-16507-CR-29.
+  // Deferred IMAGE expressions must see the state that was in effect at their own
+  // position in the template. Snapshotting loop variables by reference breaks this
+  // whenever EXEC mutates the object the variable points at: a nested FOR whose
+  // inner loop writes to the OUTER loop variable makes every image in a group
+  // render from that group's last item. This is the exact failure SE-16507 exists
+  // to prevent, so it is guarded directly.
+  it('parallel mode sees per-iteration state when an inner loop mutates the outer loop variable', async () => {
+    const template = await fs.promises.readFile(
+      path.join(__dirname, 'fixtures', 'nested_for_image_template.docx')
+    );
+    const groups = [
+      { id: 'G1', items: [{ w: 1 }, { w: 2 }] },
+      { id: 'G2', items: [{ w: 3 }, { w: 4 }] },
+    ];
+
+    const run = async (imageConcurrency?: number) => {
+      const widths: number[] = [];
+      await createReport({
+        template,
+        data: { groups },
+        additionalJsContext: {
+          getImage: (w: number) => {
+            widths.push(w);
+            return {
+              width: w,
+              height: 1,
+              data: samplePng,
+              extension: '.png' as const,
+            };
+          },
+        },
+        cmdDelimiter: ['{{', '}}'] as [string, string],
+        ...(imageConcurrency != null ? { imageConcurrency } : {}),
+      });
+      return widths;
+    };
+
+    expect(await run()).toEqual([1, 2, 3, 4]);
+    expect(await run(4)).toEqual([1, 2, 3, 4]);
+  });
+
   // Regression test for SE-16507-CR-18.
   // The inline path reports image errors through processCmd's catch, which calls
   // errorHandler(err, cmdRest) -- the bare expression. The parallel path passed
@@ -1272,26 +1314,29 @@ describe('parallel image error handling and edge cases', () => {
     expect(await run(4)).toEqual([0, 0, 0]);
   });
 
-  // Regression test for SE-16507-CR-24.
-  // Loop variables are reassigned each iteration, never mutated in place, so they
-  // do not need deep cloning into the frozen sandbox. Cloning them anyway means
-  // $row is no longer the object that lives in `data`, and identity lookups
-  // (indexOf / === / includes / Map.get) silently fail in parallel mode only.
-  it('parallel mode preserves loop variable identity with the data it came from', async () => {
+  // SE-16507-CR-24 / CR-29: documents an accepted limitation, not a bug.
+  // Loop variables are deep-cloned into the frozen sandbox so that each deferred
+  // IMAGE sees the state in effect at its own position (see the CR-29 test below).
+  // The unavoidable cost is that $row is a COPY, so it is not the same object as
+  // the one in `data` and identity lookups do not match in parallel mode.
+  // Preserving identity requires sharing; snapshotting per-iteration state
+  // requires copying. Copying wins. Asserted so any future change is deliberate.
+  it('parallel mode passes a copy of the loop variable, not the object from data', async () => {
     const template = await fs.promises.readFile(
       path.join(__dirname, 'fixtures', 'loop_var_identity_image_template.docx')
     );
     const rows = [{ sku: 'A1' }, { sku: 'B2' }, { sku: 'C3' }];
 
     const run = async (imageConcurrency?: number) => {
-      const positions: number[] = [];
+      const byIdentity: number[] = [];
+      const byValue: string[] = [];
       await createReport({
         template,
         data: { rows },
         additionalJsContext: {
-          // asks "which row is this?" by identity, exactly as a caller would
           getImage: (row: any) => {
-            positions.push(rows.indexOf(row));
+            byIdentity.push(rows.indexOf(row));
+            byValue.push(row.sku);
             return {
               width: 2,
               height: 2,
@@ -1303,12 +1348,19 @@ describe('parallel image error handling and edge cases', () => {
         cmdDelimiter: ['{{', '}}'] as [string, string],
         ...(imageConcurrency != null ? { imageConcurrency } : {}),
       });
-      return positions;
+      return { byIdentity, byValue };
     };
 
-    // Sequential is the reference behaviour; parallel must match it.
-    expect(await run()).toEqual([0, 1, 2]);
-    expect(await run(4)).toEqual([0, 1, 2]);
+    const inline = await run();
+    const parallel = await run(4);
+
+    // What matters: every image sees its own iteration's values, in both modes.
+    expect(inline.byValue).toEqual(['A1', 'B2', 'C3']);
+    expect(parallel.byValue).toEqual(['A1', 'B2', 'C3']);
+
+    // Identity holds inline (no copy is taken) but not in parallel (a copy is).
+    expect(inline.byIdentity).toEqual([0, 1, 2]);
+    expect(parallel.byIdentity).toEqual([-1, -1, -1]);
   });
 
   // Regression test for SE-16507-CR-17.

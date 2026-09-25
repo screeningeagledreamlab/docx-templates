@@ -872,20 +872,23 @@ const processCmd: CommandProcessor = async (
           const curLoop = getCurLoop(ctx);
           if (curLoop) frozenSandbox.$idx = curLoop.idx;
 
-          // Snapshot vars by reference, NOT by deep clone. A FOR loop reassigns
-          // its variable each iteration (`ctx.vars[varName] = nextItem`) rather
-          // than mutating it in place, so copying the container is already
-          // enough to capture per-iteration state — and copying the value would
-          // make `$row` a different object from the one in `data`, silently
-          // breaking identity lookups (indexOf / === / includes / Map.get) in
-          // parallel mode only. This matches the inline path, where
-          // `sandbox.$<var>` is a direct reference to `ctx.vars[<var>]`.
+          // Deep-clone loop variables, sharing the `seen` map above so aliasing
+          // between a var and the rest of the snapshot is preserved.
           //
-          // EXEC-created sandbox state IS still deep-cloned above, because that
-          // genuinely is mutated in place across iterations (`$config.x = $row`).
+          // A by-reference snapshot was tried (SE-16507-CR-24) to keep `$row`
+          // identical to the object in `data`, and had to be reverted: EXEC can
+          // mutate the object a loop variable points at, and then every deferred
+          // IMAGE sees the final state. A nested FOR whose inner loop writes to
+          // the outer loop variable made every image in a group render from that
+          // group's last item — the exact failure this feature exists to prevent
+          // (SE-16507-CR-29, guarded by a regression test).
+          //
+          // The trade-off is inherent: preserving identity requires sharing,
+          // snapshotting per-iteration state requires copying. Copying wins;
+          // identity is not preserved and is documented as a limitation.
           const frozenVars: Record<string, unknown> = {};
           for (const k of Object.keys(ctx.vars)) {
-            frozenVars[k] = ctx.vars[k];
+            frozenVars[k] = cloneVal(ctx.vars[k], seen);
             frozenSandbox[`$${k}`] = frozenVars[k];
           }
 

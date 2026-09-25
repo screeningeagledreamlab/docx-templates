@@ -169,17 +169,18 @@ export type UserOptions = {
    *    but identity checks against your own data — indexOf, ===, includes,
    *    Set.has, Map.get / WeakMap.get keyed by data objects — will not match.
    *    Compare by value instead (findIndex(x => x.id === $item.id)).
-   *    EXEC-created sandbox state is copied, so an object stashed there
-   *    (e.g. `EXEC $cfg.current = $item`) reaches the IMAGE expression as a
-   *    copy. $vars, including FOR loop variables, are NOT copied and do keep
-   *    their identity.
+   *    Copied: $vars (including FOR loop variables) and EXEC-created sandbox
+   *    state, when they are plain objects, arrays, Map, Set or Date. Copying
+   *    is what makes per-iteration state correct, and losing identity is its
+   *    unavoidable cost — sharing instead would make every deferred IMAGE see
+   *    the final iteration's values.
    *
    * 2. Values that are SHARED by reference show their final state, not their
    *    per-iteration state, because deferred expressions run after the walk.
    *    Shared: anything reached through `data` or `additionalJsContext`,
    *    whatever its type; class instances, functions and Buffers wherever they
-   *    come from; $vars (see above); and, with `noSandbox`, every $var
-   *    assigned from EXEC, which cannot be captured at all.
+   *    come from; and, with `noSandbox`, every $var assigned from EXEC, which
+   *    cannot be captured at all.
    *
    * The practical rule: in parallel mode, treat `data` and everything reachable
    * from it as read-only for the duration of the report. Mutating it from EXEC
