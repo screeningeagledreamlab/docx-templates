@@ -64,16 +64,22 @@ function isPlainObject(val: object): val is Record<string, unknown> {
 
 export function cloneVal(
   val: unknown,
-  seen = new Map<object, object>()
+  seen = new Map<object, object>(),
+  shared?: WeakSet<object>
 ): unknown {
   if (val == null || typeof val !== 'object') return val;
   const obj = val as object;
   if (seen.has(obj)) return seen.get(obj);
+  if (shared?.has(obj)) {
+    seen.set(obj, obj);
+    return obj;
+  }
 
   if (Array.isArray(val)) {
     const arr: unknown[] = [];
     seen.set(obj, arr);
-    for (let i = 0; i < val.length; i++) arr.push(cloneVal(val[i], seen));
+    for (let i = 0; i < val.length; i++)
+      arr.push(cloneVal(val[i], seen, shared));
 
     return arr;
   }
@@ -88,14 +94,14 @@ export function cloneVal(
     const map = new Map<unknown, unknown>();
     seen.set(obj, map);
     (val as Map<unknown, unknown>).forEach((v, k) =>
-      map.set(cloneVal(k, seen), cloneVal(v, seen))
+      map.set(cloneVal(k, seen, shared), cloneVal(v, seen, shared))
     );
     return map;
   }
   if (tag === '[object Set]') {
     const set = new Set<unknown>();
     seen.set(obj, set);
-    (val as Set<unknown>).forEach(v => set.add(cloneVal(v, seen)));
+    (val as Set<unknown>).forEach(v => set.add(cloneVal(v, seen, shared)));
     return set;
   }
 
@@ -104,10 +110,29 @@ export function cloneVal(
   const out: Record<string, unknown> = {};
   seen.set(obj, out);
   for (const k of Object.keys(val as Record<string, unknown>)) {
-    out[k] = cloneVal((val as Record<string, unknown>)[k], seen);
+    out[k] = cloneVal((val as Record<string, unknown>)[k], seen, shared);
   }
 
   return out;
+}
+
+function collectReachable(
+  root: unknown,
+  out: WeakSet<object>,
+  depth = 0
+): void {
+  if (root == null || typeof root !== 'object' || depth > 60) return;
+  const obj = root as object;
+  if (out.has(obj)) return;
+  out.add(obj);
+  if (Array.isArray(root)) {
+    for (let i = 0; i < root.length; i++)
+      collectReachable(root[i], out, depth + 1);
+    return;
+  }
+  for (const k of Object.keys(root as Record<string, unknown>)) {
+    collectReachable((root as Record<string, unknown>)[k], out, depth + 1);
+  }
 }
 
 export function newContext(
@@ -858,13 +883,22 @@ const processCmd: CommandProcessor = async (
           // into unrelated copies. Each pending image still gets its own map, so
           // no aliasing is introduced between separate images.
           const seen = new Map<object, object>();
+          const sharedFromData: WeakSet<object> =
+            ctx.sharedDataObjs ??
+            (ctx.sharedDataObjs = (() => {
+              const sset = new WeakSet<object>();
+              collectReachable(data, sset);
+              return sset;
+            })());
+          const snapshot = (v: unknown): unknown =>
+            cloneVal(v, seen, sharedFromData);
           const clonedSandbox: SandBox = {
             __code__: undefined,
             __result__: undefined,
           };
           for (const k of Object.keys(ctx.jsSandbox || {})) {
             if (shadowedKeys.has(k)) continue;
-            clonedSandbox[k] = cloneVal((ctx.jsSandbox as SandBox)[k], seen);
+            clonedSandbox[k] = snapshot((ctx.jsSandbox as SandBox)[k]);
           }
           const frozenSandbox: SandBox = {
             ...clonedSandbox,
@@ -890,7 +924,7 @@ const processCmd: CommandProcessor = async (
           // identity is not preserved and is documented as a limitation.
           const frozenVars: Record<string, unknown> = {};
           for (const k of Object.keys(ctx.vars)) {
-            frozenVars[k] = cloneVal(ctx.vars[k], seen);
+            frozenVars[k] = snapshot(ctx.vars[k]);
             frozenSandbox[`$${k}`] = frozenVars[k];
           }
 

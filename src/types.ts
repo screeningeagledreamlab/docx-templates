@@ -256,6 +256,7 @@ export type Context = {
 
   // For parallel image downloads
   pendingImageDownloads: PendingImageDownload[];
+  sharedDataObjs?: WeakSet<object>;
 };
 
 // Represents a pending image download that will be resolved later
