@@ -61,31 +61,35 @@ export async function runUserJsAndGetRaw(
     } else if (ctx.options.noSandbox) {
       context = sandbox;
       const wrapper = new Function('with(this) { return eval(__code__); }');
-      // `with` only intercepts identifiers that are already properties of the
+      // `with` only intercepts identifiers that are already properties of its
       // target, so EXEC's bare assignment to a NEW name (`{{! total = 0 }}`)
-      // falls through to the host global object instead of landing on the
+      // would fall through to the host global object instead of landing on the
       // sandbox. The sandbox snapshot would then be missing exactly the vars
       // parallel IMAGE evaluation needs, and every deferred expression would
       // read the final iteration's value from the global.
       //
-      // Reclaim anything the snippet added to the global, synchronously, before
-      // awaiting: a returned promise must not give another report a chance to
-      // observe or steal these. Identifier resolution itself is untouched, so
-      // host globals stay reachable and unknown names still throw ReferenceError.
+      // The `has` trap claims every name the host global does not already
+      // define, so those assignments land on the sandbox and nothing is ever
+      // written to globalThis -- no cleanup pass, and no chance of clobbering a
+      // cache or singleton that helper code keeps there on purpose. Names the
+      // host global does define are left unclaimed, so they keep resolving
+      // through the real global scope with their usual receiver (`fetch`,
+      // `console`, `Math` and direct `eval` are unaffected). Reading a name
+      // neither side defines still throws ReferenceError.
+      //
+      // One deviation from plain `with`: `typeof someUndeclaredName` throws
+      // rather than yielding 'undefined', because the name now resolves here.
       const globalObj = globalThis as unknown as Record<string, unknown>;
-      const globalKeysBefore = new Set(Object.keys(globalObj));
-      let raw;
-      try {
-        raw = wrapper.call(context);
-      } finally {
-        for (const key of Object.keys(globalObj)) {
-          if (!globalKeysBefore.has(key)) {
-            (context as SandBox)[key] = globalObj[key];
-            delete globalObj[key];
-          }
-        }
-      }
-      result = await raw;
+      const scope = new Proxy(sandbox, {
+        has: (target, key) => key in target || !(key in globalObj),
+        get: (target, key) => {
+          if (key === Symbol.unscopables) return undefined;
+          if (key in target) return (target as SandBox)[key as string];
+          if (key in globalObj) return globalObj[key as string];
+          throw new ReferenceError(`${String(key)} is not defined`);
+        },
+      });
+      result = await wrapper.call(scope);
     } else {
       const script = new vm.Script(sandbox.__code__ ?? '');
       context = vm.createContext(sandbox);

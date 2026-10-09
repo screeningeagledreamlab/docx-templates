@@ -894,6 +894,85 @@ if (process.env.DEBUG) setDebugLogSink(console.log);
         expect('startingIndex' in g).toBe(false);
         expect('itemsLength' in g).toBe(false);
       });
+
+      // The sandbox must not reach into the host global object to collect
+      // EXEC-created variables: it cannot tell them apart from globals that user
+      // code and libraries set deliberately, and relocating those onto the
+      // sandbox defeats any globalThis-keyed cache or singleton a helper relies
+      // on -- rebuilding it once per command instead of once per report.
+      it('leaves globals that helper code sets deliberately alone', async () => {
+        const g = globalThis as Record<string, unknown>;
+        const KEY = '__docxTemplatesHelperCache';
+        delete g[KEY];
+        let initCount = 0;
+
+        try {
+          await createReport({
+            template,
+            noSandbox,
+            data: { items, rows },
+            additionalJsContext: {
+              getImage: () => {
+                if (!g[KEY]) {
+                  g[KEY] = {};
+                  initCount += 1;
+                }
+                return {
+                  width: 2,
+                  height: 2,
+                  data: samplePng,
+                  extension: '.png' as const,
+                };
+              },
+            },
+            cmdDelimiter: ['{{', '}}'],
+          });
+        } finally {
+          delete g[KEY];
+        }
+
+        // Five IMAGE commands: the helper's singleton is built once, not once
+        // per command.
+        expect(initCount).toBe(1);
+      });
+
+      // The same reclaim also deleted the key from the global object. Besides
+      // defeating caches, `delete` on a non-configurable property throws
+      // TypeError in a strict-mode build -- which the published lib/ is -- and
+      // throwing from a `finally` replaces whatever the snippet had produced.
+      // (That TypeError is not reachable from this suite: ts-jest emits
+      // non-strict code for target es5, where `delete` fails silently.) The
+      // invariant that rules both out: a report removes nothing from the global
+      // object.
+      it('does not remove globals that helper code sets deliberately', async () => {
+        const g = globalThis as Record<string, unknown>;
+        const KEY = '__docxTemplatesHelperFlag';
+        delete g[KEY];
+
+        try {
+          await createReport({
+            template,
+            noSandbox,
+            data: { items, rows },
+            additionalJsContext: {
+              getImage: () => {
+                g[KEY] = 'set by helper';
+                return {
+                  width: 2,
+                  height: 2,
+                  data: samplePng,
+                  extension: '.png' as const,
+                };
+              },
+            },
+            cmdDelimiter: ['{{', '}}'],
+          });
+
+          expect(g[KEY]).toBe('set by helper');
+        } finally {
+          delete g[KEY];
+        }
+      });
     });
 
     // ============================================================
