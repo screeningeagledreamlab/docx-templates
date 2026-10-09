@@ -200,20 +200,32 @@ const report = await createReport({
    * inline during template walking.
    *
    * Each deferred IMAGE snapshots the template state at its position, so
-   * expressions see per-iteration values inside FOR loops. Two caveats.
+   * expressions see per-iteration values inside FOR loops. The snapshot
+   * captures variable BINDINGS, not copies of the values they refer to. One
+   * rule follows, and it is the whole contract:
    *
-   * Copied values are not the same objects as the originals, so identity
-   * checks against your own data (indexOf, ===, includes, Map.get keyed by
-   * data objects) will not match — compare by value instead. Copied: $vars
-   * (including FOR loop variables) and EXEC-created sandbox state. Copying is
-   * what makes per-iteration state correct; losing identity is its unavoidable
-   * cost.
+   *   Scalars are captured by value. Objects are shared by reference.
    *
-   * Shared values show their final state rather than their per-iteration
-   * state, because deferred expressions run after the walk. Shared: anything
-   * reached through `data` or `additionalJsContext`, and class instances,
-   * functions and Buffers. The practical rule: treat `data` as read-only for
-   * the duration of the report when using parallel mode.
+   * So an EXEC-assigned number or string is per-iteration correct — that is
+   * what this mode exists to get right:
+   *
+   *   {{! startingIndex = $row * 5; }}
+   *   {{IMAGE getMarker($view.legend.items[startingIndex].marker)}}
+   *
+   * ...while an object is not snapshotted at all. Mutating one from EXEC
+   * inside a FOR loop makes every deferred IMAGE see the last iteration's
+   * state, whether that object came from `data`, from a loop variable, or
+   * from EXEC itself:
+   *
+   *   {{! $config.index = $row; }}       <- NOT snapshotted
+   *   {{IMAGE getImage($config.index)}}     every image sees the last $row
+   *
+   * The practical rule: in parallel mode, treat every object as read-only for
+   * the duration of the report, and carry per-iteration state in scalars.
+   *
+   * Identity is preserved, since nothing is copied: $row is the very object
+   * held in `data`, so indexOf, ===, Set.has and Map.get all behave as they
+   * do in the default inline mode.
    */
   imageConcurrency?: number;
 });
