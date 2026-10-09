@@ -4,7 +4,7 @@
 
 ---
 
-## Unreleased
+## 1.0.2 (2026-10-09)
 
 Parallel image processing (`imageConcurrency`) is made opt-in and corrected inside `FOR`
 loops. **This release contains breaking changes** — see below before upgrading.

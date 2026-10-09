@@ -12,7 +12,7 @@ This fork includes the following enhancements over the original library:
 - **Asynchronous image downloading** - Images are now downloaded concurrently (opt-in via the `imageConcurrency` option), significantly speeding up report generation when templates contain multiple images. See the option's documentation below for state-snapshotting semantics inside FOR loops
 - **`allowNestedIf` option** - New configuration option that allows nested IF commands within the same paragraph or table row (disabled by default for backwards compatibility)
 
-### ⚠️ Breaking Changes (unreleased)
+### ⚠️ Breaking Changes (1.0.2)
 - **`imageConcurrency` no longer defaults to `10`** - parallel image processing is now opt-in. Leave it unset for sequential processing (the default); pass it explicitly to opt in. Output is unchanged; only throughput differs
 - **Image error shapes are now identical in both modes** - parallel-mode errors are no longer double-wrapped in `ImageError`, and `rejectNullish` on `IMAGE` surfaces `NullishCommandResultError`. Code matching on `ImageError` or on the old nested message text needs updating
 - **`noSandbox` no longer leaks template variables to `globalThis`** - `EXEC`-created variables land on the sandbox, and globals your own helpers set are left alone. Side effect: `typeof someUndeclaredName` in a template now throws `ReferenceError`
