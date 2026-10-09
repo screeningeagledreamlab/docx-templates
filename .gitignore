@@ -16,3 +16,7 @@ coverage
 # Project-specific
 **/~$*.docx
 lib/__tests__
+
+# Local developer artifacts (not part of the package)
+.idea/
+docs-local/

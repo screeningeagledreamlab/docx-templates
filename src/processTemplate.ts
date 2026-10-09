@@ -24,6 +24,7 @@ import {
   ImageExtensions,
   NonTextNode,
   PendingImageDownload,
+  SandBox,
 } from './types';
 import {
   isError,
@@ -760,35 +761,70 @@ const processCmd: CommandProcessor = async (
           // Build placeholder XML structure with node references for later updates
           const pendingDownload = buildPendingImageNode(ctx, relId, id, cmd);
 
-          // MEMORY OPTIMIZATION: We capture loop state but NOT the data object.
-          // - `data` is immutable during template processing, so we reference it directly
-          // - `ctx.vars` contains loop variables that change per iteration, so we snapshot them
-          // - Only clone vars when inside a loop (ctx.loops.length > 0) to avoid unnecessary allocations
-          const isInsideLoop = ctx.loops.length > 0;
-          const capturedVars = isInsideLoop ? { ...ctx.vars } : null;
-          const capturedIdx = isInsideLoop ? getCurLoop(ctx)?.idx : undefined;
-
-          pendingDownload.fetchImage = () => {
-            // If we captured loop state, temporarily restore it for this evaluation
-            if (capturedVars !== null) {
-              const savedVars = ctx.vars;
-              const savedLoop = getCurLoop(ctx);
-              const savedIdx = savedLoop?.idx;
-              ctx.vars = capturedVars;
-              if (savedLoop && capturedIdx !== undefined)
-                savedLoop.idx = capturedIdx;
-              try {
-                return runUserJsAndGetRaw(data, cmdRest, ctx);
-              } finally {
-                // Restore original vars
-                ctx.vars = savedVars;
-                if (savedLoop && savedIdx !== undefined)
-                  savedLoop.idx = savedIdx;
-              }
-            }
-            // Not inside a loop - execute directly without state swapping
-            return runUserJsAndGetRaw(data, cmdRest, ctx);
+          // Build a frozen sandbox capturing the complete evaluation environment
+          // at this point in the walk — correct vars, loop idx, EXEC state.
+          // Each pending download gets its own independent sandbox, so concurrent
+          // evaluation in resolvePendingImages needs no shared ctx mutation.
+          //
+          // Deep-clone EXEC-created sandbox values and vars to avoid
+          // cross-iteration leakage when EXEC mutates object properties
+          // (e.g. config.index = $row). Without cloning, all frozen sandboxes
+          // share the same object references and see the final iteration's
+          // values.
+          //
+          // Keys coming from data / additionalJsContext are deliberately NOT
+          // cloned: they are spread in below at a higher priority (matching the
+          // order in runUserJsAndGetRaw), so cloning them here would only build
+          // a copy that the spread immediately discards. Skipping them also
+          // keeps additionalJsContext functions at their original references.
+          // Note this means objects reached through data are SHARED across all
+          // deferred evaluations — see the imageConcurrency docs in types.ts.
+          const shadowedKeys = new Set([
+            ...Object.keys(data ?? {}),
+            ...Object.keys(ctx.options.additionalJsContext ?? {}),
+          ]);
+          const clonedSandbox: SandBox = {
+            __code__: undefined,
+            __result__: undefined,
           };
+          for (const k of Object.keys(ctx.jsSandbox || {})) {
+            if (shadowedKeys.has(k)) continue;
+            clonedSandbox[k] = (ctx.jsSandbox as SandBox)[k];
+          }
+          const frozenSandbox: SandBox = {
+            ...clonedSandbox,
+            ...data,
+            ...ctx.options.additionalJsContext,
+          };
+          const curLoop = getCurLoop(ctx);
+          if (curLoop) frozenSandbox.$idx = curLoop.idx;
+
+          const frozenVars: Record<string, unknown> = {};
+          for (const k of Object.keys(ctx.vars)) {
+            frozenVars[k] = ctx.vars[k];
+            frozenSandbox[`$${k}`] = frozenVars[k];
+          }
+
+          pendingDownload.frozenSandbox = frozenSandbox;
+          pendingDownload.code = cmdRest;
+          // errorHandler receives the bare expression, matching what the inline
+          // path passes from processCmd's catch. `cmd` keeps the full command
+          // for ImageError messages.
+          pendingDownload.errorHandlerCommand = cmdRest;
+
+          // Snapshot ctx for runJs compatibility: reuse the deep-cloned vars
+          // and shallow-copy loops so runJs sees correct walk-time state
+          // without cross-iteration object mutation leakage.
+          // Note: other ctx fields (buffers, images, pIfCheckMap, etc.) are
+          // shared refs but are effectively idle post-walk; only vars and
+          // loops matter for expression evaluation.
+          if (ctx.options.runJs) {
+            pendingDownload.frozenCtx = {
+              ...ctx,
+              vars: frozenVars,
+              loops: ctx.loops.map(l => ({ ...l })),
+            };
+          }
 
           // Store the pending download for later resolution
           ctx.pendingImageDownloads.push(pendingDownload);
@@ -1197,7 +1233,8 @@ const buildPendingImageNode = (
   // Return the pending download with node references
   return {
     id: relId,
-    fetchImage: () => Promise.resolve(undefined), // Will be replaced with actual fetch function
+    frozenSandbox: { __code__: undefined, __result__: undefined },
+    code: '',
     cmd,
     extentNode,
     picExtNode,
@@ -1211,6 +1248,99 @@ const buildPendingImageNode = (
 };
 
 /**
+ * Apply resolved image data to a pending image's placeholder XML nodes.
+ * Shared by both inline (processImage) and parallel (resolvePendingImages) paths.
+ */
+const applyImageData = (
+  ctx: Context,
+  imagePars: ImagePars,
+  pending: PendingImageDownload
+) => {
+  validateImagePars(imagePars);
+  const cx = (imagePars.width * 360e3).toFixed(0);
+  const cy = (imagePars.height * 360e3).toFixed(0);
+
+  // Update dimensions
+  if (pending.extentNode) {
+    pending.extentNode._attrs.cx = cx;
+    pending.extentNode._attrs.cy = cy;
+  }
+  if (pending.picExtNode) {
+    pending.picExtNode._attrs.cx = cx;
+    pending.picExtNode._attrs.cy = cy;
+  }
+
+  // Handle rotation
+  if (imagePars.rotation && pending.xfrmNode) {
+    const rot = (imagePars.rotation * 60e3).toString();
+    pending.xfrmNode._attrs.rot = rot;
+  }
+
+  // Handle alt text
+  const alt = imagePars.alt || '';
+  if (pending.docPrNode) {
+    pending.docPrNode._attrs.descr = alt;
+  }
+  if (pending.cNvPrNode) {
+    pending.cNvPrNode._attrs.descr = alt;
+  }
+
+  // Store image data
+  const imgData = getImageData(imagePars);
+  validateImage(imgData);
+
+  // Handle SVG images - need to add thumbnail
+  if (imgData.extension === '.svg') {
+    const thumbnail: Image = imagePars.thumbnail ?? {
+      data: 'bm90aGluZwo=',
+      extension: '.png',
+    };
+
+    // Store the SVG with its original ID
+    ctx.images[pending.id] = imgData;
+
+    // Create a new ID for the thumbnail
+    const thumbRelId = imageToContext(ctx, thumbnail);
+
+    // Add SVG extension to extLst
+    if (pending.extLstNode) {
+      const svgBlipNode = newNonTextNode('asvg:svgBlip', {
+        'xmlns:asvg':
+          'http://schemas.microsoft.com/office/drawing/2016/SVG/main',
+        'r:embed': pending.id,
+      });
+      const svgExtNode = newNonTextNode(
+        'a:ext',
+        { uri: '{96DAC541-7B7A-43D3-8B79-37D633B846F1}' },
+        [svgBlipNode]
+      );
+      svgExtNode._parent = pending.extLstNode;
+      svgBlipNode._parent = svgExtNode;
+      pending.extLstNode._children.push(svgExtNode);
+    }
+
+    // Update blip to reference thumbnail instead of SVG
+    if (pending.blipNode) {
+      pending.blipNode._attrs['r:embed'] = thumbRelId;
+    }
+  } else {
+    // Non-SVG image - just store the data
+    ctx.images[pending.id] = imgData;
+  }
+};
+
+// Remove an orphaned placeholder drawing node from the output tree.
+// Called when a parallel IMAGE expression fails or returns null.
+function removeDrawingNode(pending: PendingImageDownload): void {
+  const node = pending.drawingNode;
+  if (node?._parent) {
+    const siblings = node._parent._children;
+    const idx = siblings.indexOf(node);
+    if (idx >= 0) siblings.splice(idx, 1);
+  }
+}
+
+/**
  * Resolve all pending image downloads in parallel with concurrency control.
  * This should be called after template walking completes but before XML generation.
  * Updates ctx.images with the resolved image data and updates XML node dimensions.
@@ -1218,9 +1348,10 @@ const buildPendingImageNode = (
 export async function resolvePendingImages(
   ctx: Context,
   concurrency: number = DEFAULT_IMAGE_CONCURRENCY
-): Promise<void> {
+): Promise<Error[]> {
   const pendingDownloads = ctx.pendingImageDownloads;
-  if (pendingDownloads.length === 0) return;
+  if (pendingDownloads.length === 0) return [];
+  const errors: Error[] = [];
 
   logger.debug(
     `Resolving ${pendingDownloads.length} pending image downloads with concurrency limit of ${concurrency}...`
@@ -1229,9 +1360,36 @@ export async function resolvePendingImages(
   // Create a concurrency limiter
   const limit = pLimit(concurrency);
 
-  // Execute downloads with concurrency control
+  // Execute evaluations with concurrency control — each uses its own frozen sandbox.
+  // In fail-fast mode (failFast enabled, no errorHandler), stop launching queued
+  // evaluations as soon as one fails: in-flight evaluations (at most `concurrency`)
+  // still settle — promises cannot be cancelled — but the remaining queued ones are
+  // skipped. p-limit starts tasks in document order, so skipped evaluations are
+  // always after the first failure; the error reported below is unaffected.
+  const failFastEager =
+    ctx.options.failFast && ctx.options.errorHandler == null;
+  let abortQueued = false;
   const results = await Promise.allSettled(
-    pendingDownloads.map(pd => limit(() => pd.fetchImage()))
+    pendingDownloads.map(pd =>
+      limit(async () => {
+        // Skipped evaluations resolve to undefined. The loop below throws at the
+        // failed result (always earlier in document order) before reaching them,
+        // so the whole report is discarded and their placeholders never ship.
+        if (abortQueued) return undefined;
+        try {
+          return await runUserJsAndGetRaw(
+            undefined,
+            pd.code,
+            ctx,
+            pd.frozenSandbox,
+            pd.frozenCtx
+          );
+        } catch (e) {
+          if (failFastEager) abortQueued = true;
+          throw e;
+        }
+      })
+    )
   );
 
   // Process results and update nodes
@@ -1240,132 +1398,68 @@ export async function resolvePendingImages(
     const pending = pendingDownloads[i];
 
     if (result.status === 'rejected') {
-      // Handle download failure
+      // Remove orphaned placeholder node from the output tree
+      removeDrawingNode(pending);
       const error = result.reason;
+      // runUserJsAndGetRaw has already produced the error the inline path would
+      // surface -- CommandExecutionError for a throwing expression, a typed
+      // NullishCommandResultError for rejectNullish. Wrapping it again in
+      // ImageError would nest the message and erase the class, so the same
+      // failure would look different depending on which mode the caller chose.
+      // (Image *data* failures are different: applyImageData throws raw, and the
+      // catch below wraps it, matching what processImage does inline.)
+      const evalError = isError(error)
+        ? error
+        : new ImageError(new Error(String(error)), pending.cmd);
       if (ctx.options.errorHandler != null) {
         await ctx.options.errorHandler(
-          error instanceof Error ? error : new Error(String(error)),
-          pending.cmd
+          evalError,
+          pending.errorHandlerCommand ?? pending.cmd
         );
       } else if (ctx.options.failFast) {
-        throw new ImageError(
-          error instanceof Error ? error : new Error(String(error)),
-          pending.cmd
-        );
+        throw evalError;
+      } else {
+        errors.push(evalError);
       }
-
-      // Skip this image - it will have placeholder dimensions
       continue;
     }
 
     const imagePars = result.value;
     if (imagePars == null) {
-      // No image returned, skip
+      // Expression returned null — no image to insert; remove placeholder
+      removeDrawingNode(pending);
       continue;
     }
 
     try {
-      // Validate image parameters
-      validateImagePars(imagePars);
+      applyImageData(ctx, imagePars, pending);
 
-      // Calculate dimensions
-      const cx = (imagePars.width * 360e3).toFixed(0);
-      const cy = (imagePars.height * 360e3).toFixed(0);
-
-      // Update XML node dimensions
-      if (pending.extentNode) {
-        pending.extentNode._attrs.cx = cx;
-        pending.extentNode._attrs.cy = cy;
-      }
-      if (pending.picExtNode) {
-        pending.picExtNode._attrs.cx = cx;
-        pending.picExtNode._attrs.cy = cy;
-      }
-
-      // Handle rotation
-      if (imagePars.rotation && pending.xfrmNode) {
-        const rot = (imagePars.rotation * 60e3).toString();
-        pending.xfrmNode._attrs.rot = rot;
-      }
-
-      // Handle alt text
-      const alt = imagePars.alt || '';
-      if (pending.docPrNode) {
-        pending.docPrNode._attrs.descr = alt;
-      }
-      if (pending.cNvPrNode) {
-        pending.cNvPrNode._attrs.descr = alt;
-      }
-
-      // Store image data
-      const imgData = getImageData(imagePars);
-      validateImage(imgData);
-
-      // Handle SVG images - need to add thumbnail
-      if (imgData.extension === '.svg') {
-        const thumbnail: Image = imagePars.thumbnail ?? {
-          data: 'bm90aGluZwo=',
-          extension: '.png',
-        };
-
-        // Store the SVG with its original ID
-        ctx.images[pending.id] = imgData;
-
-        // Create a new ID for the thumbnail
-        ctx.imageAndShapeIdIncrement += 1;
-        const thumbId = String(ctx.imageAndShapeIdIncrement);
-        const thumbRelId = `img${thumbId}`;
-        validateImage(thumbnail);
-        ctx.images[thumbRelId] = thumbnail;
-
-        // Add SVG extension to extLst
-        if (pending.extLstNode) {
-          const svgBlipNode = newNonTextNode('asvg:svgBlip', {
-            'xmlns:asvg':
-              'http://schemas.microsoft.com/office/drawing/2016/SVG/main',
-            'r:embed': pending.id,
-          });
-          const svgExtNode = newNonTextNode(
-            'a:ext',
-            { uri: '{96DAC541-7B7A-43D3-8B79-37D633B846F1}' },
-            [svgBlipNode]
-          );
-          // Set parent references
-          svgExtNode._parent = pending.extLstNode;
-          svgBlipNode._parent = svgExtNode;
-          pending.extLstNode._children.push(svgExtNode);
-        }
-
-        // Update blip to reference thumbnail instead of SVG
-        if (pending.blipNode) {
-          pending.blipNode._attrs['r:embed'] = thumbRelId;
-        }
-      } else {
-        // Non-SVG image - just store the data
-        ctx.images[pending.id] = imgData;
-      }
-
-      // Handle caption if provided
+      // Handle caption if provided (parallel mode stores captionParent reference)
       if (imagePars.caption && pending.captionParent) {
         const captionBr = newNonTextNode('w:br', {});
         const captionText = newTextNode(imagePars.caption);
         const captionT = newNonTextNode('w:t', {}, [captionText]);
 
-        // Set parent references
         captionBr._parent = pending.captionParent;
         captionT._parent = pending.captionParent;
         captionText._parent = captionT;
 
-        // Add caption nodes after the drawing node
         pending.captionParent._children.push(captionBr);
         pending.captionParent._children.push(captionT);
       }
     } catch (e) {
+      removeDrawingNode(pending);
       if (!isError(e)) throw e;
+      const imgError = new ImageError(e, pending.cmd);
       if (ctx.options.errorHandler != null) {
-        await ctx.options.errorHandler(e, pending.cmd);
+        await ctx.options.errorHandler(
+          imgError,
+          pending.errorHandlerCommand ?? pending.cmd
+        );
       } else if (ctx.options.failFast) {
-        throw new ImageError(e, pending.cmd);
+        throw imgError;
+      } else {
+        errors.push(imgError);
       }
     }
   }
@@ -1373,6 +1467,7 @@ export async function resolvePendingImages(
   // Clear the pending downloads
   ctx.pendingImageDownloads = [];
   logger.debug('All pending image downloads resolved.');
+  return errors;
 }
 
 function getImageData(imagePars: ImagePars): Image {
@@ -1385,130 +1480,37 @@ function getImageData(imagePars: ImagePars): Image {
   return { extension, data };
 }
 
-// Process image and build XML node - used after image data is resolved
-const processImage = (
-  ctx: Context,
-  imagePars: ImagePars,
-  preAssignedRelId?: string
-) => {
-  validateImagePars(imagePars);
-  const cx = (imagePars.width * 360e3).toFixed(0);
-  const cy = (imagePars.height * 360e3).toFixed(0);
+// Process image inline: build placeholder nodes, then immediately apply resolved data.
+const processImage = (ctx: Context, imagePars: ImagePars) => {
+  // Assign image ID (same as parallel path)
+  ctx.imageAndShapeIdIncrement += 1;
+  const id = String(ctx.imageAndShapeIdIncrement);
+  const relId = `img${id}`;
 
-  let imgRelId: string;
-  let id: string;
+  // Build placeholder XML structure (shared with parallel path).
+  // NOTE: this publishes ctx.pendingImageNode, which walkTemplate splices into
+  // the output tree when it leaves the enclosing w:t.
+  const pending = buildPendingImageNode(ctx, relId, id, '');
 
-  if (preAssignedRelId) {
-    // Use pre-assigned ID from parallel download
-    imgRelId = preAssignedRelId;
-    id = preAssignedRelId.replace('img', '');
-    // Store the image data directly with the pre-assigned ID
-    const imgData = getImageData(imagePars);
-    validateImage(imgData);
-    ctx.images[imgRelId] = imgData;
-  } else {
-    // Legacy path: assign new ID
-    imgRelId = imageToContext(ctx, getImageData(imagePars));
-    id = String(ctx.imageAndShapeIdIncrement);
-  }
-  const alt = imagePars.alt || '';
-  const node = newNonTextNode;
-
-  const extNodes = [];
-  extNodes.push(
-    node('a:ext', { uri: '{28A0092B-C50C-407E-A947-70E740481C1C}' }, [
-      node('a14:useLocalDpi', {
-        'xmlns:a14': 'http://schemas.microsoft.com/office/drawing/2010/main',
-        val: '0',
-      }),
-    ])
-  );
-
-  // http://officeopenxml.com/drwSp-rotate.php
-  // Values are in 60,000ths of a degree, with positive angles moving clockwise or towards the positive y-axis.
-  const rot = imagePars.rotation
-    ? (imagePars.rotation * 60e3).toString()
-    : undefined;
-
-  if (ctx.images[imgRelId].extension === '.svg') {
-    // Default to an empty thumbnail, as it is not critical and just part of the docx standard's scaffolding.
-    // Without a thumbnail, the svg won't render (even in newer versions of Word that don't need the thumbnail).
-    const thumbnail: Image = imagePars.thumbnail ?? {
-      data: 'bm90aGluZwo=',
-      extension: '.png',
-    };
-
-    const thumbRelId = imageToContext(ctx, thumbnail);
-    extNodes.push(
-      node('a:ext', { uri: '{96DAC541-7B7A-43D3-8B79-37D633B846F1}' }, [
-        node('asvg:svgBlip', {
-          'xmlns:asvg':
-            'http://schemas.microsoft.com/office/drawing/2016/SVG/main',
-          'r:embed': imgRelId,
-        }),
-      ])
-    );
-
-    // For SVG the thumb is placed where the image normally goes.
-    imgRelId = thumbRelId;
+  // Apply resolved data immediately (dimensions, alt text, rotation, SVG handling, storage)
+  try {
+    applyImageData(ctx, imagePars, pending);
+  } catch (e) {
+    // Validation failed after the placeholder was published. Discard it, otherwise
+    // the walk splices in an orphaned zero-dimension <w:drawing> whose r:embed
+    // points at an image that never makes it into the ZIP — a dangling
+    // relationship that Word reports as a damaged file. The parallel path does
+    // the equivalent via removeDrawingNode(). The node is not in the tree yet,
+    // so dropping the reference is enough.
+    delete ctx.pendingImageNode;
+    throw e;
   }
 
-  const pic = node(
-    'pic:pic',
-    { 'xmlns:pic': 'http://schemas.openxmlformats.org/drawingml/2006/picture' },
-    [
-      node('pic:nvPicPr', {}, [
-        node('pic:cNvPr', { id: '0', name: `Picture ${id}`, descr: alt }),
-        node('pic:cNvPicPr', {}, [
-          node('a:picLocks', { noChangeAspect: '1', noChangeArrowheads: '1' }),
-        ]),
-      ]),
-      node('pic:blipFill', {}, [
-        node('a:blip', { 'r:embed': imgRelId, cstate: 'print' }, [
-          node('a:extLst', {}, extNodes),
-        ]),
-        node('a:srcRect'),
-        node('a:stretch', {}, [node('a:fillRect')]),
-      ]),
-      node('pic:spPr', { bwMode: 'auto' }, [
-        node('a:xfrm', rot ? { rot } : {}, [
-          node('a:off', { x: '0', y: '0' }),
-          node('a:ext', { cx, cy }),
-        ]),
-        node('a:prstGeom', { prst: 'rect' }, [node('a:avLst')]),
-        node('a:noFill'),
-        node('a:ln', {}, [node('a:noFill')]),
-      ]),
-    ]
-  );
-  const drawing = node('w:drawing', {}, [
-    node('wp:inline', { distT: '0', distB: '0', distL: '0', distR: '0' }, [
-      node('wp:extent', { cx, cy }),
-      node('wp:docPr', { id, name: `Picture ${id}`, descr: alt }),
-      node('wp:cNvGraphicFramePr', {}, [
-        node('a:graphicFrameLocks', {
-          'xmlns:a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
-          noChangeAspect: '1',
-        }),
-      ]),
-      node(
-        'a:graphic',
-        { 'xmlns:a': 'http://schemas.openxmlformats.org/drawingml/2006/main' },
-        [
-          node(
-            'a:graphicData',
-            { uri: 'http://schemas.openxmlformats.org/drawingml/2006/picture' },
-            [pic]
-          ),
-        ]
-      ),
-    ]),
-  ]);
-  ctx.pendingImageNode = { image: drawing };
+  // Handle caption (inline mode uses ctx.pendingImageNode)
   if (imagePars.caption) {
-    ctx.pendingImageNode.caption = [
-      node('w:br'),
-      node('w:t', {}, [newTextNode(imagePars.caption)]),
+    ctx.pendingImageNode!.caption = [
+      newNonTextNode('w:br'),
+      newNonTextNode('w:t', {}, [newTextNode(imagePars.caption)]),
     ];
   }
 };

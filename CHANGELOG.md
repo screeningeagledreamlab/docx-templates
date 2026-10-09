@@ -4,6 +4,72 @@
 
 ---
 
+## 1.0.2 (2026-10-09)
+
+Parallel image processing (`imageConcurrency`) is made opt-in and corrected inside `FOR`
+loops. **This release contains breaking changes** — see below before upgrading.
+
+### ⚠️ Breaking Changes
+
+* **`imageConcurrency` no longer defaults to `10`.** Previously the option defaulted to
+  `10` while the gate for parallel mode was `imageConcurrency != null`, so parallel mode
+  was always on and *could not be switched off*. It is now opt-in: leave it unset for
+  sequential (inline) processing, which is the default.
+  **Migration:** if you relied on the implicit default, pass `imageConcurrency: 10`
+  explicitly. Output is unchanged; only throughput differs.
+
+* **Image error shapes changed.** Errors now have the same class and message whichever
+  mode produced them.
+  - Default (inline) path: a `rejectNullish` failure on `IMAGE` now surfaces as
+    `NullishCommandResultError` instead of an `ImageError` wrapper, restoring upstream
+    behaviour.
+  - Parallel path: evaluation errors are no longer wrapped a second time in `ImageError`.
+    A throwing expression yields `CommandExecutionError`; `rejectNullish` yields
+    `NullishCommandResultError`. Image *data* validation failures still yield `ImageError`.
+
+    ```
+    before (parallel): Error executing command 'IMAGE injectImg()':
+                         Error: Error executing command 'injectImg()': Error: boom
+    after  (both):     Error executing command 'injectImg()': Error: boom
+    ```
+    **Migration:** code matching `err instanceof ImageError`, `err.command === 'IMAGE …'`,
+    or the nested message text needs updating.
+
+* **`noSandbox` mode no longer writes template variables to `globalThis`.** Variables
+  created by `EXEC` (`{{! total = 0 }}`) now land on the sandbox rather than leaking to
+  the host global object, and globals that your own helper code sets are left untouched.
+  One side effect: `typeof someUndeclaredName` inside a template now throws
+  `ReferenceError` rather than evaluating to `'undefined'`. Reading such a name already
+  threw.
+
+### New Features
+
+* `imageConcurrency` is validated up front and rejects anything that is not a positive
+  integer.
+
+### Bug Fixes
+
+* Each `IMAGE` command now snapshots the template state at its own position, so
+  expressions inside a `FOR` loop see per-iteration values instead of the final
+  iteration's. Previously every deferred image could render from the last iteration.
+* A failed or empty `IMAGE` no longer leaves an orphaned zero-dimension `<w:drawing>`
+  whose relationship points at an image that was never written to the archive — a
+  dangling reference Word reports as a damaged file.
+* `noSandbox`: `EXEC`-created variables are captured correctly for deferred image
+  evaluation, including variables assigned after an `await`.
+
+### Known Limitation
+
+In parallel mode a snapshot captures variable **bindings**, not copies of the values they
+refer to: **scalars are captured by value, objects are shared by reference.** An
+`EXEC`-assigned number or string is per-iteration correct; an object mutated during a loop
+is not snapshotted, so every deferred `IMAGE` observes its final state. Object identity is
+preserved, so `indexOf`, `===`, `Set.has` and `Map.get` behave as they do inline.
+**Carry per-iteration state in scalars.** Snapshotting objects as well was implemented and
+measured at up to 4× retained heap and ~75% more wall clock, and was not taken.
+
+---
+
 ## 1.0.0 (2025-02-04) - Fork Release
 
 **Forked from [guigrpa/docx-templates](https://github.com/guigrpa/docx-templates) v4.15.0**

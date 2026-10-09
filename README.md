@@ -9,8 +9,15 @@ Template-based docx report creation for both Node and the browser.
 This fork includes the following enhancements over the original library:
 
 ### New Features
-- **Asynchronous image downloading** - Images are now downloaded concurrently, significantly speeding up report generation when templates contain multiple images
+- **Asynchronous image downloading** - Images are now downloaded concurrently (opt-in via the `imageConcurrency` option), significantly speeding up report generation when templates contain multiple images. See the option's documentation below for state-snapshotting semantics inside FOR loops
 - **`allowNestedIf` option** - New configuration option that allows nested IF commands within the same paragraph or table row (disabled by default for backwards compatibility)
+
+### ⚠️ Breaking Changes (1.0.2)
+- **`imageConcurrency` no longer defaults to `10`** - parallel image processing is now opt-in. Leave it unset for sequential processing (the default); pass it explicitly to opt in. Output is unchanged; only throughput differs
+- **Image error shapes are now identical in both modes** - parallel-mode errors are no longer double-wrapped in `ImageError`, and `rejectNullish` on `IMAGE` surfaces `NullishCommandResultError`. Code matching on `ImageError` or on the old nested message text needs updating
+- **`noSandbox` no longer leaks template variables to `globalThis`** - `EXEC`-created variables land on the sandbox, and globals your own helpers set are left alone. Side effect: `typeof someUndeclaredName` in a template now throws `ReferenceError`
+
+See [CHANGELOG.md](./CHANGELOG.md) for migration notes.
 
 ### Bug Fixes
 - **Table column removal fix** - Fixed a regression where columns containing only conditions and commands were incorrectly removed when the condition evaluated to false
@@ -191,6 +198,43 @@ const report = await createReport({
    * (Default: false)
    */
   allowNestedIf?: boolean;
+  /**
+   * Maximum number of concurrent image downloads. When set, enables parallel
+   * image processing: IMAGE commands are collected during template walking
+   * and their expressions are evaluated concurrently at the end, which speeds
+   * up templates whose images are fetched from URLs or otherwise expensive to
+   * produce. When not set (default), images are processed one at a time,
+   * inline during template walking.
+   *
+   * Each deferred IMAGE snapshots the template state at its position, so
+   * expressions see per-iteration values inside FOR loops. The snapshot
+   * captures variable BINDINGS, not copies of the values they refer to. One
+   * rule follows, and it is the whole contract:
+   *
+   *   Scalars are captured by value. Objects are shared by reference.
+   *
+   * So an EXEC-assigned number or string is per-iteration correct — that is
+   * what this mode exists to get right:
+   *
+   *   {{! startingIndex = $row * 5; }}
+   *   {{IMAGE getMarker($view.legend.items[startingIndex].marker)}}
+   *
+   * ...while an object is not snapshotted at all. Mutating one from EXEC
+   * inside a FOR loop makes every deferred IMAGE see the last iteration's
+   * state, whether that object came from `data`, from a loop variable, or
+   * from EXEC itself:
+   *
+   *   {{! $config.index = $row; }}       <- NOT snapshotted
+   *   {{IMAGE getImage($config.index)}}     every image sees the last $row
+   *
+   * The practical rule: in parallel mode, treat every object as read-only for
+   * the duration of the report, and carry per-iteration state in scalars.
+   *
+   * Identity is preserved, since nothing is copied: $row is the very object
+   * held in `data`, so indexOf, ===, Set.has and Map.get all behave as they
+   * do in the default inline mode.
+   */
+  imageConcurrency?: number;
 });
 ```
 

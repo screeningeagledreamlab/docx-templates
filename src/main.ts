@@ -168,8 +168,15 @@ async function createReport(
     preserveSpace: options.preserveSpace ?? true,
     compressionLevel: options.compressionLevel ?? 1,
     allowNestedIf: options.allowNestedIf ?? false,
-    imageConcurrency: options.imageConcurrency ?? 10,
+    imageConcurrency: options.imageConcurrency,
   };
+  if (
+    createOptions.imageConcurrency != null &&
+    (!Number.isInteger(createOptions.imageConcurrency) ||
+      createOptions.imageConcurrency < 1)
+  ) {
+    throw new Error('imageConcurrency must be a positive integer');
+  }
   const xmlOptions = {
     literalXmlDelimiter,
     indentXml: createOptions.indentXml,
@@ -223,7 +230,11 @@ async function createReport(
   // Resolve pending image downloads only if parallel mode is enabled
   if (createOptions.imageConcurrency != null) {
     logger.debug('Resolving pending image downloads in parallel...');
-    await resolvePendingImages(ctx, createOptions.imageConcurrency);
+    const imageErrors = await resolvePendingImages(
+      ctx,
+      createOptions.imageConcurrency
+    );
+    if (imageErrors.length > 0) throw imageErrors;
   }
 
   const {
@@ -257,7 +268,11 @@ async function createReport(
 
     // Resolve pending images for this secondary XML (only if parallel mode is enabled)
     if (createOptions.imageConcurrency != null) {
-      await resolvePendingImages(ctx, createOptions.imageConcurrency);
+      const imageErrors = await resolvePendingImages(
+        ctx,
+        createOptions.imageConcurrency
+      );
+      if (imageErrors.length > 0) throw imageErrors;
     }
 
     const {
@@ -368,7 +383,6 @@ export async function listCommands(
     preserveSpace: true,
     compressionLevel: 1,
     allowNestedIf: false,
-    imageConcurrency: 10,
   };
 
   const { jsTemplate, mainDocument, zip } = await parseTemplate(template);

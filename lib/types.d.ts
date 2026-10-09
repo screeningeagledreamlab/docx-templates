@@ -141,7 +141,40 @@ export type UserOptions = {
      * When set, enables parallel image processing mode where all IMAGE commands
      * are collected during template walking and resolved in parallel at the end.
      * When not set (default), images are processed inline during template walking.
-     * Parallel mode is useful for templates with many images that do processings. eg: fetch from URLs, rotating.
+     * Parallel mode is useful for templates with many images that do processings.
+     * eg: fetch from URLs, rotating.
+     *
+     * In parallel mode, each IMAGE command snapshots the template state at its
+     * position in the template, so expressions see per-iteration values inside
+     * FOR loops. The snapshot captures variable BINDINGS, not copies of the
+     * values they refer to. One rule follows, and it is the whole contract:
+     *
+     *   Scalars are captured by value. Objects are shared by reference.
+     *
+     * So an EXEC-assigned number or string is per-iteration correct — that is
+     * what this mode exists to get right:
+     *
+     *   {{! startingIndex = $row * 5; }}
+     *   {{IMAGE getMarker($view.legend.items[startingIndex].marker)}}
+     *
+     * ...while an object is not snapshotted at all. Mutating one from EXEC
+     * inside a FOR loop makes every deferred IMAGE see the last iteration's
+     * state, whether that object came from `data`, from a loop variable, or
+     * from EXEC itself:
+     *
+     *   {{! $config.index = $row; }}          <- NOT snapshotted
+     *   {{IMAGE getImage($config.index)}}        every image sees the last $row
+     *
+     * The practical rule: in parallel mode, treat every object as read-only for
+     * the duration of the report, and carry per-iteration state in scalars.
+     *
+     * Identity is preserved, since nothing is copied: $row is the very object
+     * held in `data`, so indexOf, ===, Set.has and Map.get all behave as they
+     * do in inline mode.
+     *
+     * (Deep-copying the snapshot would cover the mutation case. It was tried,
+     * and cost up to 4x the retained heap and ~75% more wall clock on
+     * image-heavy reports, to protect a pattern templates can simply avoid.)
      */
     imageConcurrency?: number;
 };
@@ -162,7 +195,7 @@ export type CreateReportOptions = {
     preserveSpace: boolean;
     compressionLevel: number;
     allowNestedIf: boolean;
-    imageConcurrency: number;
+    imageConcurrency?: number;
 };
 export type SandBox = {
     __code__: string | undefined;
@@ -212,8 +245,11 @@ export type Context = {
 };
 export type PendingImageDownload = {
     id: string;
-    fetchImage: () => Promise<ImagePars | undefined>;
+    frozenSandbox: SandBox;
+    frozenCtx?: Context;
+    code: string;
     cmd: string;
+    errorHandlerCommand?: string;
     extentNode?: NonTextNode;
     picExtNode?: NonTextNode;
     xfrmNode?: NonTextNode;
