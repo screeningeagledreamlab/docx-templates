@@ -1,5 +1,4 @@
 import { Node, ReportData, Context, CreateReportOptions, Images, Links, Htmls } from './types';
-export declare function cloneVal(val: unknown, seen?: Map<object, object>): unknown;
 export declare function newContext(options: CreateReportOptions, imageAndShapeIdIncrement?: number): Context;
 export declare function extractQuery(template: Node, options: CreateReportOptions): Promise<string | undefined>;
 type ReportOutput = {
