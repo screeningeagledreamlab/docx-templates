@@ -80,7 +80,9 @@ export function cloneVal(
 
   const tag = Object.prototype.toString.call(val);
   if (tag === '[object Date]') {
-    return new Date((val as Date).getTime());
+    const date = new Date((val as Date).getTime());
+    seen.set(obj, date);
+    return date;
   }
   if (tag === '[object Map]') {
     const map = new Map<unknown, unknown>();

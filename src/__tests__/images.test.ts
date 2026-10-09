@@ -768,7 +768,6 @@ if (process.env.DEBUG) setDebugLogSink(console.log);
 
     // ============================================================
     // Bug reproduction: parallel IMAGE mode does not capture sandbox state
-    // See docs/bugs/parallel-images/01-sandbox-state-bug.md
     // ============================================================
     describe('parallel image sandbox state bug', () => {
       // Template structure (sandbox_loop_image_template.docx):

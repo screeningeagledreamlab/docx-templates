@@ -119,6 +119,18 @@ describe('cloneVal', () => {
     expect(clone.getTime()).toBe(1000);
   });
 
+  it('keeps two references to the same Date aliased in one clone pass', () => {
+    // Frozen image sandboxes share one `seen` map per pending image so that
+    // two sandbox entries pointing at the same object stay the same object in
+    // the snapshot. Date must honour that like Map, Set and plain objects do.
+    const shared = new Date(1000);
+    const seen = new Map<object, object>();
+    const a = cloneVal({ d: shared }, seen) as { d: Date };
+    const b = cloneVal({ d: shared }, seen) as { d: Date };
+    expect(a.d).not.toBe(shared);
+    expect(a.d).toBe(b.d);
+  });
+
   it('clones a Map created in another realm (vm sandbox)', () => {
     // Maps created inside the vm sandbox have a different Map constructor,
     // so instanceof checks would miss them

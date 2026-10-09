@@ -152,7 +152,8 @@ type UserOptions = {
      * When set, enables parallel image processing mode where all IMAGE commands
      * are collected during template walking and resolved in parallel at the end.
      * When not set (default), images are processed inline during template walking.
-     * Parallel mode is useful for templates with many images that do processings. eg: fetch from URLs, rotating.
+     * Parallel mode is useful for templates with many images that do processings.
+     * eg: fetch from URLs, rotating.
      *
      * In parallel mode, each IMAGE command snapshots the template state at its
      * position in the template, so expressions see per-iteration values inside
