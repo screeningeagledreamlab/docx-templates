@@ -818,6 +818,52 @@ describe('parallel image sandbox state bug', () => {
 
     expect(report).toBeInstanceOf(Uint8Array);
   });
+
+  // Under noSandbox, user code runs via `with (sandbox) { eval(code) }`. `with`
+  // only intercepts identifiers already present on the target, so EXEC's bare
+  // assignment to a new name lands on the host global instead of the sandbox.
+  // Those vars were therefore absent from the frozen snapshot, and every
+  // deferred IMAGE fell through to the global holding the LAST iteration value.
+  it('parallel mode resolves per-iteration state under noSandbox', async () => {
+    const seen: string[] = [];
+    const report = await createReport({
+      template,
+      data: { items, rows },
+      additionalJsContext: {
+        getImage: (itemName: string) => {
+          seen.push(itemName);
+          return {
+            width: 2,
+            height: 2,
+            data: samplePng,
+            extension: '.png' as const,
+          };
+        },
+      },
+      cmdDelimiter: ['{{', '}}'],
+      noSandbox: true,
+      imageConcurrency: 5,
+    });
+
+    expect(report).toBeInstanceOf(Uint8Array);
+    expect(seen.sort()).toEqual(items.map(i => i.name).sort());
+  });
+
+  it('noSandbox does not leak EXEC variables into the host global object', async () => {
+    const g = globalThis as Record<string, unknown>;
+    expect('startingIndex' in g).toBe(false);
+
+    await createReport({
+      template,
+      data: { items, rows },
+      additionalJsContext: { getImage },
+      cmdDelimiter: ['{{', '}}'],
+      noSandbox: true,
+    });
+
+    expect('startingIndex' in g).toBe(false);
+    expect('itemsLength' in g).toBe(false);
+  });
 });
 
 // ============================================================

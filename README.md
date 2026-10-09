@@ -211,10 +211,9 @@ const report = await createReport({
    *
    * Shared values show their final state rather than their per-iteration
    * state, because deferred expressions run after the walk. Shared: anything
-   * reached through `data` or `additionalJsContext`, class instances,
-   * functions and Buffers, and — under `noSandbox` — every $var assigned from
-   * EXEC. The practical rule: treat `data` as read-only for the duration of
-   * the report when using parallel mode.
+   * reached through `data` or `additionalJsContext`, and class instances,
+   * functions and Buffers. The practical rule: treat `data` as read-only for
+   * the duration of the report when using parallel mode.
    */
   imageConcurrency?: number;
 });

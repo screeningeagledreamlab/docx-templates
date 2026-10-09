@@ -172,9 +172,8 @@ type UserOptions = {
      * 2. Values that are SHARED by reference show their final state, not their
      *    per-iteration state, because deferred expressions run after the walk.
      *    Shared: anything reached through `data` or `additionalJsContext`,
-     *    whatever its type; class instances, functions and Buffers wherever they
-     *    come from; and, with `noSandbox`, every $var assigned from EXEC, which
-     *    cannot be captured at all.
+     *    whatever its type; and class instances, functions and Buffers wherever
+     *    they come from.
      *
      * The practical rule: in parallel mode, treat `data` and everything reachable
      * from it as read-only for the duration of the report. Mutating it from EXEC

@@ -61,7 +61,31 @@ export async function runUserJsAndGetRaw(
     } else if (ctx.options.noSandbox) {
       context = sandbox;
       const wrapper = new Function('with(this) { return eval(__code__); }');
-      result = await wrapper.call(context);
+      // `with` only intercepts identifiers that are already properties of the
+      // target, so EXEC's bare assignment to a NEW name (`{{! total = 0 }}`)
+      // falls through to the host global object instead of landing on the
+      // sandbox. The sandbox snapshot would then be missing exactly the vars
+      // parallel IMAGE evaluation needs, and every deferred expression would
+      // read the final iteration's value from the global.
+      //
+      // Reclaim anything the snippet added to the global, synchronously, before
+      // awaiting: a returned promise must not give another report a chance to
+      // observe or steal these. Identifier resolution itself is untouched, so
+      // host globals stay reachable and unknown names still throw ReferenceError.
+      const globalObj = globalThis as unknown as Record<string, unknown>;
+      const globalKeysBefore = new Set(Object.keys(globalObj));
+      let raw;
+      try {
+        raw = wrapper.call(context);
+      } finally {
+        for (const key of Object.keys(globalObj)) {
+          if (!globalKeysBefore.has(key)) {
+            (context as SandBox)[key] = globalObj[key];
+            delete globalObj[key];
+          }
+        }
+      }
+      result = await raw;
     } else {
       const script = new vm.Script(sandbox.__code__ ?? '');
       context = vm.createContext(sandbox);
