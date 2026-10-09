@@ -1205,13 +1205,12 @@ describe('parallel image error handling and edge cases', () => {
     expect(doc).toContain('My Caption');
   });
 
-  // Regression test for SE-16507-CR-29.
   // Deferred IMAGE expressions must see the state that was in effect at their own
   // position in the template. Snapshotting loop variables by reference breaks this
   // whenever EXEC mutates the object the variable points at: a nested FOR whose
   // inner loop writes to the OUTER loop variable makes every image in a group
-  // render from that group's last item. This is the exact failure SE-16507 exists
-  // to prevent, so it is guarded directly.
+  // render from that group's last item. This is the exact failure this feature
+  // exists to prevent, so it is guarded directly.
   it('parallel mode sees per-iteration state when an inner loop mutates the outer loop variable', async () => {
     const template = await fs.promises.readFile(
       path.join(__dirname, 'fixtures', 'nested_for_image_template.docx')
@@ -1247,7 +1246,6 @@ describe('parallel image error handling and edge cases', () => {
     expect(await run(4)).toEqual([1, 2, 3, 4]);
   });
 
-  // Regression test for SE-16507-CR-18.
   // The inline path reports image errors through processCmd's catch, which calls
   // errorHandler(err, cmdRest) -- the bare expression. The parallel path passed
   // the whole command including the "IMAGE " keyword, so a handler that switches
@@ -1277,7 +1275,6 @@ describe('parallel image error handling and edge cases', () => {
     expect(parallel).toEqual(inline);
   });
 
-  // Regression test for SE-16507-CR-26.
   // cloneVal's cycle-detection map was created fresh per top-level call, so two
   // sandbox entries referencing the same object became two unrelated copies.
   // Template: EXEC $list = rows; EXEC $head = $list[0]; IMAGE getImage($list, $head)
@@ -1314,9 +1311,10 @@ describe('parallel image error handling and edge cases', () => {
     expect(await run(4)).toEqual([0, 0, 0]);
   });
 
-  // SE-16507-CR-24 / CR-29: documents an accepted limitation, not a bug.
+  // Documents an accepted limitation, not a bug.
   // Loop variables are deep-cloned into the frozen sandbox so that each deferred
-  // IMAGE sees the state in effect at its own position (see the CR-29 test below).
+  // IMAGE sees the state in effect at its own position (see the nested-FOR
+  // mutation test above).
   // The unavoidable cost is that $row is a COPY, so it is not the same object as
   // the one in `data` and identity lookups do not match in parallel mode.
   // Preserving identity requires sharing; snapshotting per-iteration state
@@ -1363,7 +1361,6 @@ describe('parallel image error handling and edge cases', () => {
     expect(parallel.byIdentity).toEqual([-1, -1, -1]);
   });
 
-  // Regression test for SE-16507-CR-17.
   // `processImage` publishes the placeholder node (via buildPendingImageNode) BEFORE
   // applyImageData validates the image, so a validation failure leaves an orphaned
   // <w:drawing> with zero dimensions and an r:embed pointing at an image that was

@@ -875,13 +875,13 @@ const processCmd: CommandProcessor = async (
           // Deep-clone loop variables, sharing the `seen` map above so aliasing
           // between a var and the rest of the snapshot is preserved.
           //
-          // A by-reference snapshot was tried (SE-16507-CR-24) to keep `$row`
-          // identical to the object in `data`, and had to be reverted: EXEC can
-          // mutate the object a loop variable points at, and then every deferred
-          // IMAGE sees the final state. A nested FOR whose inner loop writes to
-          // the outer loop variable made every image in a group render from that
-          // group's last item — the exact failure this feature exists to prevent
-          // (SE-16507-CR-29, guarded by a regression test).
+          // A by-reference snapshot was tried, to keep `$row` identical to the
+          // object in `data`, and had to be reverted: EXEC can mutate the object
+          // a loop variable points at, and then every deferred IMAGE sees the
+          // final state. A nested FOR whose inner loop writes to the outer loop
+          // variable made every image in a group render from that group's last
+          // item — the exact failure this feature exists to prevent (guarded by
+          // a regression test).
           //
           // The trade-off is inherent: preserving identity requires sharing,
           // snapshotting per-iteration state requires copying. Copying wins;
