@@ -16,3 +16,10 @@ coverage
 # Project-specific
 **/~$*.docx
 lib/__tests__
+
+# Local developer artifacts (not part of the package)
+.idea/
+.claude/settings.local.json
+docs-local/
+PR_DESCRIPTION_*.md
+legend_bug_test*.docx
