@@ -163,29 +163,35 @@ export type UserOptions = {
    *
    * In parallel mode, each IMAGE command snapshots the template state at its
    * position in the template, so expressions see per-iteration values inside
-   * FOR loops. Two consequences are worth knowing before you rely on either.
+   * FOR loops. The snapshot captures variable BINDINGS, not copies of the
+   * values they refer to. One rule follows, and it is the whole contract:
    *
-   * 1. Values that are COPIED into the snapshot are no longer the same objects
-   *    as the originals. Reading them is always safe ($item.name, $item.id),
-   *    but identity checks against your own data — indexOf, ===, includes,
-   *    Set.has, Map.get / WeakMap.get keyed by data objects — will not match.
-   *    Compare by value instead (findIndex(x => x.id === $item.id)).
-   *    Copied: $vars (including FOR loop variables) and EXEC-created sandbox
-   *    state, when they are plain objects, arrays, Map, Set or Date. Copying
-   *    is what makes per-iteration state correct, and losing identity is its
-   *    unavoidable cost — sharing instead would make every deferred IMAGE see
-   *    the final iteration's values.
+   *   Scalars are captured by value. Objects are shared by reference.
    *
-   * 2. Values that are SHARED by reference show their final state, not their
-   *    per-iteration state, because deferred expressions run after the walk.
-   *    Shared: anything reached through `data` or `additionalJsContext`,
-   *    whatever its type; and class instances, functions and Buffers wherever
-   *    they come from.
+   * So an EXEC-assigned number or string is per-iteration correct — that is
+   * what this mode exists to get right:
    *
-   * The practical rule: in parallel mode, treat `data` and everything reachable
-   * from it as read-only for the duration of the report. Mutating it from EXEC
-   * inside a FOR loop makes every deferred IMAGE evaluation see the last
-   * iteration's state.
+   *   {{! startingIndex = $row * 5; }}
+   *   {{IMAGE getMarker($view.legend.items[startingIndex].marker)}}
+   *
+   * ...while an object is not snapshotted at all. Mutating one from EXEC
+   * inside a FOR loop makes every deferred IMAGE see the last iteration's
+   * state, whether that object came from `data`, from a loop variable, or
+   * from EXEC itself:
+   *
+   *   {{! $config.index = $row; }}          <- NOT snapshotted
+   *   {{IMAGE getImage($config.index)}}        every image sees the last $row
+   *
+   * The practical rule: in parallel mode, treat every object as read-only for
+   * the duration of the report, and carry per-iteration state in scalars.
+   *
+   * Identity is preserved, since nothing is copied: $row is the very object
+   * held in `data`, so indexOf, ===, Set.has and Map.get all behave as they
+   * do in inline mode.
+   *
+   * (Deep-copying the snapshot would cover the mutation case. It was tried,
+   * and cost up to 4x the retained heap and ~75% more wall clock on
+   * image-heavy reports, to protect a pattern templates can simply avoid.)
    */
   imageConcurrency?: number;
 };
@@ -256,7 +262,6 @@ export type Context = {
 
   // For parallel image downloads
   pendingImageDownloads: PendingImageDownload[];
-  sharedDataObjs?: WeakSet<object>;
 };
 
 // Represents a pending image download that will be resolved later

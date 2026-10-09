@@ -8,7 +8,7 @@ import {
 } from '../main';
 import fs from 'fs';
 import { setDebugLogSink } from '../debug';
-import { findHighestImgId, cloneVal } from '../processTemplate';
+import { findHighestImgId } from '../processTemplate';
 
 if (process.env.DEBUG) setDebugLogSink(console.log);
 
@@ -83,85 +83,5 @@ describe('findHighestImgId', () => {
     );
     const { jsTemplate } = await parseTemplate(template);
     expect(findHighestImgId(jsTemplate)).toBe(3);
-  });
-});
-
-describe('cloneVal', () => {
-  it('clones a Map so mutations of the original are not visible', () => {
-    const original = new Map<string, number>([['id', 0]]);
-    const clone = cloneVal(original) as Map<string, number>;
-    expect(clone).not.toBe(original);
-    original.set('id', 2);
-    expect(clone.get('id')).toBe(0);
-  });
-
-  it('deep-clones values stored inside a Map', () => {
-    const inner = { index: 0 };
-    const original = new Map([['config', inner]]);
-    const clone = cloneVal(original) as Map<string, { index: number }>;
-    inner.index = 2;
-    expect(clone.get('config')!.index).toBe(0);
-  });
-
-  it('clones a Set so mutations of the original are not visible', () => {
-    const original = new Set([1, 2]);
-    const clone = cloneVal(original) as Set<number>;
-    expect(clone).not.toBe(original);
-    original.add(3);
-    expect(clone.has(3)).toBe(false);
-  });
-
-  it('clones a Date so mutations of the original are not visible', () => {
-    const original = new Date(1000);
-    const clone = cloneVal(original) as Date;
-    expect(clone).not.toBe(original);
-    original.setTime(2000);
-    expect(clone.getTime()).toBe(1000);
-  });
-
-  it('keeps two references to the same Date aliased in one clone pass', () => {
-    // Frozen image sandboxes share one `seen` map per pending image so that
-    // two sandbox entries pointing at the same object stay the same object in
-    // the snapshot. Date must honour that like Map, Set and plain objects do.
-    const shared = new Date(1000);
-    const seen = new Map<object, object>();
-    const a = cloneVal({ d: shared }, seen) as { d: Date };
-    const b = cloneVal({ d: shared }, seen) as { d: Date };
-    expect(a.d).not.toBe(shared);
-    expect(a.d).toBe(b.d);
-  });
-
-  it('clones a Map created in another realm (vm sandbox)', () => {
-    // Maps created inside the vm sandbox have a different Map constructor,
-    // so instanceof checks would miss them
-    const vm = require('vm');
-    const original = vm.runInNewContext("new Map([['id', 0]])") as Map<
-      string,
-      number
-    >;
-    const clone = cloneVal(original) as Map<string, number>;
-    expect(clone).not.toBe(original);
-    original.set('id', 2);
-    expect(clone.get('id')).toBe(0);
-  });
-
-  it('handles circular references through Maps', () => {
-    const original = new Map<string, unknown>();
-    original.set('self', original);
-    const clone = cloneVal(original) as Map<string, unknown>;
-    expect(clone).not.toBe(original);
-    expect(clone.get('self')).toBe(clone);
-  });
-
-  it('returns functions, Buffers and class instances by reference', () => {
-    const fn = () => 42;
-    const buf = Buffer.from('img');
-    class Handle {
-      value = 1;
-    }
-    const instance = new Handle();
-    expect(cloneVal(fn)).toBe(fn);
-    expect(cloneVal(buf)).toBe(buf);
-    expect(cloneVal(instance)).toBe(instance);
   });
 });

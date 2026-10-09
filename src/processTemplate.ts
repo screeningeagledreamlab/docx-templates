@@ -42,99 +42,6 @@ import pLimit from 'p-limit';
 // Default concurrency limit for parallel image downloads
 const DEFAULT_IMAGE_CONCURRENCY = 10;
 
-// Deep-clone plain objects, arrays, and the built-in mutable containers
-// Map, Set and Date; return primitives and all other non-plain values
-// (functions, Buffers, class instances, etc.) as-is. Frozen sandboxes built
-// for deferred (parallel) image evaluation snapshot vars/EXEC state through
-// this function, so anything returned by reference here is shared across
-// loop iterations — mutating such a value from EXEC inside a loop leaks the
-// final iteration's state into every deferred IMAGE evaluation.
-// Detection uses Object.prototype.toString tags (and constructor.name for
-// plain objects) rather than instanceof, because values created inside the
-// vm sandbox come from a different realm with different constructors.
-// Null-prototype objects (Object.create(null)) are treated as plain.
-function isPlainObject(val: object): val is Record<string, unknown> {
-  const proto = Object.getPrototypeOf(val);
-  return (
-    proto === null ||
-    proto === Object.prototype ||
-    proto?.constructor?.name === 'Object'
-  );
-}
-
-export function cloneVal(
-  val: unknown,
-  seen = new Map<object, object>(),
-  shared?: WeakSet<object>
-): unknown {
-  if (val == null || typeof val !== 'object') return val;
-  const obj = val as object;
-  if (seen.has(obj)) return seen.get(obj);
-  if (shared?.has(obj)) {
-    seen.set(obj, obj);
-    return obj;
-  }
-
-  if (Array.isArray(val)) {
-    const arr: unknown[] = [];
-    seen.set(obj, arr);
-    for (let i = 0; i < val.length; i++)
-      arr.push(cloneVal(val[i], seen, shared));
-
-    return arr;
-  }
-
-  const tag = Object.prototype.toString.call(val);
-  if (tag === '[object Date]') {
-    const date = new Date((val as Date).getTime());
-    seen.set(obj, date);
-    return date;
-  }
-  if (tag === '[object Map]') {
-    const map = new Map<unknown, unknown>();
-    seen.set(obj, map);
-    (val as Map<unknown, unknown>).forEach((v, k) =>
-      map.set(cloneVal(k, seen, shared), cloneVal(v, seen, shared))
-    );
-    return map;
-  }
-  if (tag === '[object Set]') {
-    const set = new Set<unknown>();
-    seen.set(obj, set);
-    (val as Set<unknown>).forEach(v => set.add(cloneVal(v, seen, shared)));
-    return set;
-  }
-
-  if (!isPlainObject(val)) return val;
-
-  const out: Record<string, unknown> = {};
-  seen.set(obj, out);
-  for (const k of Object.keys(val as Record<string, unknown>)) {
-    out[k] = cloneVal((val as Record<string, unknown>)[k], seen, shared);
-  }
-
-  return out;
-}
-
-function collectReachable(
-  root: unknown,
-  out: WeakSet<object>,
-  depth = 0
-): void {
-  if (root == null || typeof root !== 'object' || depth > 60) return;
-  const obj = root as object;
-  if (out.has(obj)) return;
-  out.add(obj);
-  if (Array.isArray(root)) {
-    for (let i = 0; i < root.length; i++)
-      collectReachable(root[i], out, depth + 1);
-    return;
-  }
-  for (const k of Object.keys(root as Record<string, unknown>)) {
-    collectReachable((root as Record<string, unknown>)[k], out, depth + 1);
-  }
-}
-
 export function newContext(
   options: CreateReportOptions,
   imageAndShapeIdIncrement = 0
@@ -876,29 +783,13 @@ const processCmd: CommandProcessor = async (
             ...Object.keys(data ?? {}),
             ...Object.keys(ctx.options.additionalJsContext ?? {}),
           ]);
-          // Share one `seen` map across every clone taken for THIS pending image,
-          // so two sandbox entries that reference the same object stay aliased in
-          // the snapshot (e.g. `EXEC $list = rows; $head = $list[0]` must keep
-          // $list.indexOf($head) === 0). A per-call map would clone them twice
-          // into unrelated copies. Each pending image still gets its own map, so
-          // no aliasing is introduced between separate images.
-          const seen = new Map<object, object>();
-          const sharedFromData: WeakSet<object> =
-            ctx.sharedDataObjs ??
-            (ctx.sharedDataObjs = (() => {
-              const sset = new WeakSet<object>();
-              collectReachable(data, sset);
-              return sset;
-            })());
-          const snapshot = (v: unknown): unknown =>
-            cloneVal(v, seen, sharedFromData);
           const clonedSandbox: SandBox = {
             __code__: undefined,
             __result__: undefined,
           };
           for (const k of Object.keys(ctx.jsSandbox || {})) {
             if (shadowedKeys.has(k)) continue;
-            clonedSandbox[k] = snapshot((ctx.jsSandbox as SandBox)[k]);
+            clonedSandbox[k] = (ctx.jsSandbox as SandBox)[k];
           }
           const frozenSandbox: SandBox = {
             ...clonedSandbox,
@@ -908,23 +799,9 @@ const processCmd: CommandProcessor = async (
           const curLoop = getCurLoop(ctx);
           if (curLoop) frozenSandbox.$idx = curLoop.idx;
 
-          // Deep-clone loop variables, sharing the `seen` map above so aliasing
-          // between a var and the rest of the snapshot is preserved.
-          //
-          // A by-reference snapshot was tried, to keep `$row` identical to the
-          // object in `data`, and had to be reverted: EXEC can mutate the object
-          // a loop variable points at, and then every deferred IMAGE sees the
-          // final state. A nested FOR whose inner loop writes to the outer loop
-          // variable made every image in a group render from that group's last
-          // item — the exact failure this feature exists to prevent (guarded by
-          // a regression test).
-          //
-          // The trade-off is inherent: preserving identity requires sharing,
-          // snapshotting per-iteration state requires copying. Copying wins;
-          // identity is not preserved and is documented as a limitation.
           const frozenVars: Record<string, unknown> = {};
           for (const k of Object.keys(ctx.vars)) {
-            frozenVars[k] = snapshot(ctx.vars[k]);
+            frozenVars[k] = ctx.vars[k];
             frozenSandbox[`$${k}`] = frozenVars[k];
           }
 

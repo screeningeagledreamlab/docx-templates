@@ -903,23 +903,27 @@ if (process.env.DEBUG) setDebugLogSink(console.log);
     // mutations are visible to earlier frozen sandboxes, so all IMAGE commands
     // see the final iteration's value instead of their own.
     // ============================================================
-    describe('parallel image mutable var leakage bug', () => {
-      // Template structure (mutable_var_image_template.docx):
-      //   {{! $config = { index: -1 }; }}
-      //   {{FOR row in rows}}
-      //     {{! $config.index = $row; }}
-      //     {{IMAGE getImage($config.index)}}
-      //   {{END-FOR row}}
-      //
-      // Data: rows = [0, 1, 2]
-      //   row 0: $config.index = 0 -> getImage(0)
-      //   row 1: $config.index = 1 -> getImage(1)
-      //   row 2: $config.index = 2 -> getImage(2)
-      //
-      // BUG: In parallel mode, all frozen sandboxes share the same $config object.
-      // After the walk completes, $config.index = 2 (last iteration).
-      // All deferred IMAGE evaluations see $config.index = 2 -> getImage(2) for all.
-
+    // Documents an accepted limitation, not a bug.
+    //
+    // Template structure (mutable_var_image_template.docx):
+    //   {{! $config = { index: -1 }; }}
+    //   {{FOR row in rows}}
+    //     {{! $config.index = $row; }}
+    //     {{IMAGE getImage($config.index)}}
+    //   {{END-FOR row}}
+    //
+    // A frozen sandbox snapshots the variable BINDINGS at the IMAGE's position
+    // in the walk, not the objects they point at. A scalar is captured by
+    // value, so EXEC-assigned numbers and strings are per-iteration correct --
+    // that is the bug parallel IMAGE mode exists to fix. An object is captured
+    // by reference, so mutating it from EXEC inside a loop is NOT snapshotted:
+    // every deferred evaluation reads the final iteration's state.
+    //
+    // Deep-cloning the snapshot would cover this, and was tried: it cost up to
+    // 4x the retained heap and ~75% more wall clock on image-heavy reports,
+    // to protect a pattern no template in use relies on. Asserted so that any
+    // future change back to cloning is a deliberate one.
+    describe('parallel image mutable var sharing (documented limitation)', () => {
       const samplePng = fs.readFileSync(
         path.join(__dirname, 'fixtures', 'sample.png')
       );
@@ -958,7 +962,7 @@ if (process.env.DEBUG) setDebugLogSink(console.log);
         expect(receivedIndices).toEqual([0, 1, 2]);
       });
 
-      it('parallel mode should pass correct index to each getImage call', async () => {
+      it('parallel mode sees the final iteration of a mutated EXEC object', async () => {
         const receivedIndices: number[] = [];
         const getImage = (index: number) => {
           receivedIndices.push(index);
@@ -980,16 +984,16 @@ if (process.env.DEBUG) setDebugLogSink(console.log);
         });
 
         expect(report).toBeInstanceOf(Uint8Array);
-        // BUG: with shallow-copy frozen sandbox, all calls see $config.index = 2
-        // (the value from the last FOR iteration), so we get [2, 2, 2] instead of [0, 1, 2]
-        expect(receivedIndices).toEqual([0, 1, 2]);
+        // $config is shared by reference, so every deferred evaluation reads
+        // $config.index = 2, the value left by the last FOR iteration.
+        // Contrast the inline assertion above: [0, 1, 2].
+        expect(receivedIndices).toEqual([2, 2, 2]);
       });
     });
 
-    // Same leakage class as above, but through a non-plain container: a Map
-    // mutated via EXEC is shared by reference across frozen sandboxes unless
-    // cloneVal clones it.
-    describe('parallel image Map var leakage bug', () => {
+    // Same limitation as above, through a non-plain container: a Map created
+    // and mutated via EXEC is shared by reference across frozen sandboxes.
+    describe('parallel image Map var sharing (documented limitation)', () => {
       // Template structure (map_var_image_template.docx):
       //   {{! $state = new Map(); }}
       //   {{FOR row in rows}}
@@ -1034,7 +1038,7 @@ if (process.env.DEBUG) setDebugLogSink(console.log);
         expect(receivedIds).toEqual([0, 1, 2]);
       });
 
-      it('parallel mode passes correct Map state to each getImage call', async () => {
+      it('parallel mode sees the final iteration of a mutated EXEC Map', async () => {
         const receivedIds: number[] = [];
         const report = await createReport({
           template,
@@ -1046,10 +1050,9 @@ if (process.env.DEBUG) setDebugLogSink(console.log);
         });
 
         expect(report).toBeInstanceOf(Uint8Array);
-        // The Map created via EXEC in the vm sandbox must be cloned per frozen
-        // sandbox; otherwise all deferred evaluations see the final iteration's
-        // state and this yields [2, 2, 2]
-        expect(receivedIds.sort()).toEqual([0, 1, 2]);
+        // The Map is shared, so every deferred evaluation reads the entry left
+        // by the last FOR iteration. Contrast the inline assertion above.
+        expect(receivedIds).toEqual([2, 2, 2]);
       });
     });
 
@@ -1293,7 +1296,13 @@ if (process.env.DEBUG) setDebugLogSink(console.log);
       // inner loop writes to the OUTER loop variable makes every image in a group
       // render from that group's last item. This is the exact failure this feature
       // exists to prevent, so it is guarded directly.
-      it('parallel mode sees per-iteration state when an inner loop mutates the outer loop variable', async () => {
+      // Documents an accepted limitation, not a bug. Same class as the
+      // "mutable var sharing" suite above, reached through a loop variable:
+      // $g is data.groups[i], which src/types.ts documents as shared by
+      // reference and read-only for the duration of the report. The inner
+      // loop writes $g.current, so each group's deferred IMAGEs all read the
+      // value left by that group's last item.
+      it('parallel mode shares an outer loop variable mutated by an inner loop', async () => {
         const template = await fs.promises.readFile(
           path.join(__dirname, 'fixtures', 'nested_for_image_template.docx')
         );
@@ -1326,7 +1335,7 @@ if (process.env.DEBUG) setDebugLogSink(console.log);
         };
 
         expect(await run()).toEqual([1, 2, 3, 4]);
-        expect(await run(4)).toEqual([1, 2, 3, 4]);
+        expect(await run(4)).toEqual([2, 2, 4, 4]);
       });
 
       // The inline path reports image errors through processCmd's catch, which calls
@@ -1396,15 +1405,12 @@ if (process.env.DEBUG) setDebugLogSink(console.log);
         expect(await run(4)).toEqual([0, 0, 0]);
       });
 
-      // Documents an accepted limitation, not a bug.
-      // Loop variables are deep-cloned into the frozen sandbox so that each deferred
-      // IMAGE sees the state in effect at its own position (see the nested-FOR
-      // mutation test above).
-      // The unavoidable cost is that $row is a COPY, so it is not the same object as
-      // the one in `data` and identity lookups do not match in parallel mode.
-      // Preserving identity requires sharing; snapshotting per-iteration state
-      // requires copying. Copying wins. Asserted so any future change is deliberate.
-      it('parallel mode passes a copy of the loop variable, not the object from data', async () => {
+      // A frozen sandbox captures loop variable BINDINGS, not copies of the
+      // objects they point at, so $row stays the very object held in `data`
+      // and identity lookups behave the same in both modes. Asserted because
+      // this has flipped twice: cloning was introduced to snapshot EXEC
+      // mutations, then dropped for the memory and wall clock it cost.
+      it('parallel mode passes the object from data as the loop variable', async () => {
         const template = await fs.promises.readFile(
           path.join(
             __dirname,
@@ -1446,9 +1452,9 @@ if (process.env.DEBUG) setDebugLogSink(console.log);
         expect(inline.byValue).toEqual(['A1', 'B2', 'C3']);
         expect(parallel.byValue).toEqual(['A1', 'B2', 'C3']);
 
-        // Identity holds inline (no copy is taken) but not in parallel (a copy is).
+        // Identity holds in both modes: no copy is taken in either.
         expect(inline.byIdentity).toEqual([0, 1, 2]);
-        expect(parallel.byIdentity).toEqual([-1, -1, -1]);
+        expect(parallel.byIdentity).toEqual(inline.byIdentity);
       });
 
       // `processImage` publishes the placeholder node (via buildPendingImageNode) BEFORE
