@@ -736,3 +736,362 @@ describe('012: Sequential vs Concurrent image processing', () => {
     expect(concurrentTime).toBeLessThan(sequentialTime);
   }, 60000);
 });
+
+// ============================================================
+// Bug reproduction: parallel IMAGE mode does not capture sandbox state
+// See docs/bugs/parallel-images/01-sandbox-state-bug.md
+// ============================================================
+describe('parallel image sandbox state bug', () => {
+  // Template structure (sandbox_loop_image_template.docx):
+  //   {{! itemsLength = items.length;}}
+  //   {{FOR row in rows}}
+  //     {{! startingIndex = $row * 2;}}
+  //     {{IF startingIndex < itemsLength}}
+  //       {{IMAGE getImage(items[startingIndex].name)}}
+  //     {{END-IF}}
+  //     {{IF startingIndex + 1 < itemsLength}}
+  //       {{IMAGE getImage(items[startingIndex + 1].name)}}
+  //     {{END-IF}}
+  //   {{END-FOR row}}
+  //
+  // Data: 5 items (objects with .name), 2 per row = 3 rows
+  //   row 0: startingIndex=0 -> items[0].name, items[1].name
+  //   row 1: startingIndex=2 -> items[2].name, items[3].name
+  //   row 2: startingIndex=4 -> items[4].name (items[5] skipped by IF guard)
+  //
+  // BUG: In parallel mode, all deferred IMAGE closures see startingIndex=4
+  // (from the last FOR iteration). Row 0 tries items[4+1].name -> items[5] is
+  // undefined -> TypeError: Cannot read properties of undefined (reading 'name')
+
+  const samplePng = fs.readFileSync(
+    path.join(__dirname, 'fixtures', 'sample.png')
+  );
+
+  const items = [
+    { name: 'apple' },
+    { name: 'banana' },
+    { name: 'cherry' },
+    { name: 'date' },
+    { name: 'elderberry' },
+  ];
+  const rows = [0, 1, 2]; // 3 rows, 2 items per row
+
+  const getImage = (_itemName: string) => ({
+    width: 2,
+    height: 2,
+    data: samplePng,
+    extension: '.png' as const,
+  });
+
+  let template: Buffer;
+  beforeAll(async () => {
+    template = await fs.promises.readFile(
+      path.join(__dirname, 'fixtures', 'sandbox_loop_image_template.docx')
+    );
+  });
+
+  it('inline mode creates report successfully', async () => {
+    // Inline mode (no imageConcurrency) processes images immediately during
+    // template walking, so each IMAGE sees the correct startingIndex.
+    const report = await createReport({
+      template,
+      data: { items, rows },
+      additionalJsContext: { getImage },
+      cmdDelimiter: ['{{', '}}'],
+    });
+
+    expect(report).toBeInstanceOf(Uint8Array);
+  });
+
+  it('parallel mode resolves images with correct per-iteration sandbox state', async () => {
+    // Previously this crashed with:
+    //   TypeError: Cannot read properties of undefined (reading 'name')
+    // because all deferred closures saw startingIndex=4 (last iteration).
+    // With the sandbox override fix, each closure uses its captured sandbox snapshot.
+    const report = await createReport({
+      template,
+      data: { items, rows },
+      additionalJsContext: { getImage },
+      cmdDelimiter: ['{{', '}}'],
+      imageConcurrency: 5,
+    });
+
+    expect(report).toBeInstanceOf(Uint8Array);
+  });
+});
+
+// ============================================================
+// Bug reproduction: frozen sandbox shallow-copies mutable object vars
+// When EXEC mutates a property on an object variable (e.g. $config.index = $row),
+// all frozen sandboxes share the same object reference. Later iterations'
+// mutations are visible to earlier frozen sandboxes, so all IMAGE commands
+// see the final iteration's value instead of their own.
+// ============================================================
+describe('parallel image mutable var leakage bug', () => {
+  // Template structure (mutable_var_image_template.docx):
+  //   {{! $config = { index: -1 }; }}
+  //   {{FOR row in rows}}
+  //     {{! $config.index = $row; }}
+  //     {{IMAGE getImage($config.index)}}
+  //   {{END-FOR row}}
+  //
+  // Data: rows = [0, 1, 2]
+  //   row 0: $config.index = 0 -> getImage(0)
+  //   row 1: $config.index = 1 -> getImage(1)
+  //   row 2: $config.index = 2 -> getImage(2)
+  //
+  // BUG: In parallel mode, all frozen sandboxes share the same $config object.
+  // After the walk completes, $config.index = 2 (last iteration).
+  // All deferred IMAGE evaluations see $config.index = 2 -> getImage(2) for all.
+
+  const samplePng = fs.readFileSync(
+    path.join(__dirname, 'fixtures', 'sample.png')
+  );
+
+  const rows = [0, 1, 2];
+
+  let template: Buffer;
+  beforeAll(async () => {
+    template = await fs.promises.readFile(
+      path.join(__dirname, 'fixtures', 'mutable_var_image_template.docx')
+    );
+  });
+
+  it('inline mode passes correct index to each getImage call', async () => {
+    const receivedIndices: number[] = [];
+    const getImage = (index: number) => {
+      receivedIndices.push(index);
+      return {
+        width: 2,
+        height: 2,
+        data: samplePng,
+        extension: '.png' as const,
+      };
+    };
+
+    const report = await createReport({
+      template,
+      data: { rows },
+      additionalJsContext: { getImage },
+      cmdDelimiter: ['{{', '}}'],
+    });
+
+    expect(report).toBeInstanceOf(Uint8Array);
+    // Inline mode: each IMAGE is evaluated immediately, sees correct $config.index
+    expect(receivedIndices).toEqual([0, 1, 2]);
+  });
+
+  it('parallel mode should pass correct index to each getImage call', async () => {
+    const receivedIndices: number[] = [];
+    const getImage = (index: number) => {
+      receivedIndices.push(index);
+      return {
+        width: 2,
+        height: 2,
+        data: samplePng,
+        extension: '.png' as const,
+      };
+    };
+
+    const report = await createReport({
+      template,
+      data: { rows },
+      additionalJsContext: { getImage },
+      cmdDelimiter: ['{{', '}}'],
+      imageConcurrency: 5,
+    });
+
+    expect(report).toBeInstanceOf(Uint8Array);
+    // BUG: with shallow-copy frozen sandbox, all calls see $config.index = 2
+    // (the value from the last FOR iteration), so we get [2, 2, 2] instead of [0, 1, 2]
+    expect(receivedIndices).toEqual([0, 1, 2]);
+  });
+});
+
+// ============================================================
+// Parallel image mode: error handling and edge cases
+// ============================================================
+describe('parallel image error handling and edge cases', () => {
+  const samplePng = fs.readFileSync(
+    path.join(__dirname, 'fixtures', 'sample.png')
+  );
+
+  let simpleTemplate: Buffer;
+  beforeAll(async () => {
+    simpleTemplate = await fs.promises.readFile(
+      path.join(__dirname, 'fixtures', 'imageSimple.docx')
+    );
+  });
+
+  it('imageConcurrency: 1 produces valid output (sequential via p-limit)', async () => {
+    const report = await createReport({
+      template: simpleTemplate,
+      data: {},
+      additionalJsContext: {
+        injectImg: () => ({
+          width: 6,
+          height: 6,
+          data: samplePng,
+          extension: '.png' as const,
+        }),
+      },
+      imageConcurrency: 1,
+    });
+    expect(report).toBeInstanceOf(Uint8Array);
+  });
+
+  it('imageConcurrency: 0 throws a validation error', async () => {
+    await expect(
+      createReport({
+        template: simpleTemplate,
+        data: {},
+        additionalJsContext: {
+          injectImg: () => ({
+            width: 6,
+            height: 6,
+            data: samplePng,
+            extension: '.png' as const,
+          }),
+        },
+        imageConcurrency: 0,
+      })
+    ).rejects.toThrow('imageConcurrency must be a positive integer');
+  });
+
+  it('parallel mode propagates errors when failFast is true (default)', async () => {
+    await expect(
+      createReport({
+        template: simpleTemplate,
+        data: {},
+        additionalJsContext: {
+          injectImg: () => {
+            throw new Error('image download failed');
+          },
+        },
+        imageConcurrency: 5,
+      })
+    ).rejects.toThrow('image download failed');
+  });
+
+  it('parallel mode collects errors when failFast is false and no errorHandler', async () => {
+    await expect(
+      createReport({
+        template: simpleTemplate,
+        data: {},
+        additionalJsContext: {
+          injectImg: () => {
+            throw new Error('image download failed');
+          },
+        },
+        imageConcurrency: 5,
+        failFast: false,
+      })
+    ).rejects.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: expect.stringContaining('image download failed'),
+        }),
+      ])
+    );
+  });
+
+  it('parallel mode calls errorHandler on failure', async () => {
+    const handledErrors: Error[] = [];
+    const report = await createReport({
+      template: simpleTemplate,
+      data: {},
+      additionalJsContext: {
+        injectImg: () => {
+          throw new Error('image download failed');
+        },
+      },
+      imageConcurrency: 5,
+      errorHandler: (e: Error) => {
+        handledErrors.push(e);
+      },
+    });
+    expect(report).toBeInstanceOf(Uint8Array);
+    expect(handledErrors.length).toBe(1);
+    expect(handledErrors[0].message).toContain('image download failed');
+  });
+
+  it('parallel mode handles SVG images correctly', async () => {
+    const svgTemplate = await fs.promises.readFile(
+      path.join(__dirname, 'fixtures', 'imagesSVG.docx')
+    );
+    const svgData = await fs.promises.readFile(
+      path.join(__dirname, 'fixtures', 'sample.svg')
+    );
+
+    const report = await createReport({
+      template: svgTemplate,
+      data: {},
+      additionalJsContext: {
+        svgImgFile: () => ({
+          width: 6,
+          height: 6,
+          data: svgData,
+          extension: '.svg' as const,
+        }),
+        svgImgStr: () => ({
+          width: 6,
+          height: 6,
+          data: Buffer.from(
+            '<svg xmlns="http://www.w3.org/2000/svg"><rect width="100" height="100"/></svg>'
+          ),
+          extension: '.svg' as const,
+        }),
+      },
+      imageConcurrency: 5,
+    });
+    expect(report).toBeInstanceOf(Uint8Array);
+
+    // Verify the output contains SVG-related XML structures
+    const zip = await JSZip.loadAsync(report);
+    const doc = await zip.file('word/document.xml')?.async('string');
+    expect(doc).toContain('asvg:svgBlip');
+  });
+
+  it('parallel mode handles image captions', async () => {
+    const captionTemplate = await fs.promises.readFile(
+      path.join(__dirname, 'fixtures', 'imageCaption.docx')
+    );
+
+    const report = await createReport({
+      template: captionTemplate,
+      data: {},
+      additionalJsContext: {
+        injectImg: () => ({
+          width: 6,
+          height: 6,
+          data: samplePng,
+          extension: '.png' as const,
+          caption: 'My Caption',
+        }),
+      },
+      imageConcurrency: 5,
+    });
+    expect(report).toBeInstanceOf(Uint8Array);
+
+    const zip = await JSZip.loadAsync(report);
+    const doc = await zip.file('word/document.xml')?.async('string');
+    expect(doc).toContain('My Caption');
+  });
+
+  it('parallel mode removes placeholder when image expression returns null', async () => {
+    const report = await createReport({
+      template: simpleTemplate,
+      data: {},
+      additionalJsContext: {
+        injectImg: () => null,
+      },
+      imageConcurrency: 5,
+    });
+    expect(report).toBeInstanceOf(Uint8Array);
+
+    const zip = await JSZip.loadAsync(report);
+    const doc = await zip.file('word/document.xml')?.async('string');
+    // The placeholder drawing node should have been removed
+    expect(doc).not.toContain('<w:drawing');
+  });
+});

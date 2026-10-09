@@ -16,33 +16,46 @@ import { logger } from './debug';
 export async function runUserJsAndGetRaw(
   data: ReportData | undefined,
   code: string,
-  ctx: Context
+  ctx: Context,
+  sandboxOverride?: SandBox,
+  frozenCtx?: Context
 ): Promise<any> {
   // Retrieve the current JS sandbox contents (if any) and add
   // the code to be run, and a placeholder for the result,
-  // as well as all data defined by the user
-  const sandbox: SandBox = {
-    ...(ctx.jsSandbox || {}),
-    __code__: code,
-    __result__: undefined,
-    ...data,
-    ...ctx.options.additionalJsContext,
-  };
+  // as well as all data defined by the user.
+  // When sandboxOverride is provided (deferred image evaluation),
+  // use it as-is — data, additionalJsContext, vars, and $idx are
+  // already baked in with the correct priority from walk time.
+  const sandbox: SandBox = sandboxOverride
+    ? { ...sandboxOverride, __code__: code, __result__: undefined }
+    : {
+        ...(ctx.jsSandbox || {}),
+        __code__: code,
+        __result__: undefined,
+        ...data,
+        ...ctx.options.additionalJsContext,
+      };
 
   // Add currently defined vars, including loop vars and the index
-  // of the innermost loop
-  const curLoop = getCurLoop(ctx);
-  if (curLoop) sandbox.$idx = curLoop.idx;
-  Object.keys(ctx.vars).forEach(varName => {
-    sandbox[`$${varName}`] = ctx.vars[varName];
-  });
+  // of the innermost loop.
+  // Skip when sandboxOverride is provided — the frozen sandbox already
+  // contains the correct $idx and $varName values from walk time.
+  if (!sandboxOverride) {
+    const curLoop = getCurLoop(ctx);
+    if (curLoop) sandbox.$idx = curLoop.idx;
+    Object.keys(ctx.vars).forEach(varName => {
+      sandbox[`$${varName}`] = ctx.vars[varName];
+    });
+  }
 
   // Run the JS snippet and extract the result
   let context;
   let result;
   try {
     if (ctx.options.runJs) {
-      const temp = ctx.options.runJs({ sandbox, ctx });
+      // When a frozenCtx is provided (parallel image mode), pass it to runJs
+      // so the user's custom runner sees correct walk-time vars/loops state
+      const temp = ctx.options.runJs({ sandbox, ctx: frozenCtx ?? ctx });
       context = temp.modifiedSandbox;
       result = await temp.result;
     } else if (ctx.options.noSandbox) {
@@ -74,11 +87,15 @@ export async function runUserJsAndGetRaw(
   }
 
   // Save the sandbox for later use, omitting the __code__ and __result__ properties.
-  ctx.jsSandbox = {
-    ...context,
-    __code__: undefined,
-    __result__: undefined,
-  };
+  // Skip writeback when a sandboxOverride was provided — deferred image evaluations
+  // run after template walking is complete and should not pollute the shared sandbox.
+  if (!sandboxOverride) {
+    ctx.jsSandbox = {
+      ...context,
+      __code__: undefined,
+      __result__: undefined,
+    };
+  }
   logger.debug('Command returned: ', result);
   return result;
 }

@@ -180,7 +180,7 @@ export type CreateReportOptions = {
   preserveSpace: boolean;
   compressionLevel: number;
   allowNestedIf: boolean;
-  imageConcurrency: number;
+  imageConcurrency?: number;
 };
 
 export type SandBox = {
@@ -234,8 +234,9 @@ export type Context = {
 // Represents a pending image download that will be resolved later
 export type PendingImageDownload = {
   id: string; // The image relId (e.g., 'img1')
-  // Function that starts the download - called with concurrency control
-  fetchImage: () => Promise<ImagePars | undefined>;
+  frozenSandbox: SandBox; // Pre-built sandbox with vars/loop state baked in
+  frozenCtx?: Context; // Shallow copy of ctx with snapshotted vars/loops for runJs
+  code: string; // JS expression to evaluate (cmdRest)
   cmd: string; // Original command for error reporting
   // References to XML nodes that need dimension updates after resolution
   extentNode?: NonTextNode; // wp:extent node

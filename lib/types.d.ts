@@ -162,7 +162,7 @@ export type CreateReportOptions = {
     preserveSpace: boolean;
     compressionLevel: number;
     allowNestedIf: boolean;
-    imageConcurrency: number;
+    imageConcurrency?: number;
 };
 export type SandBox = {
     __code__: string | undefined;
@@ -212,7 +212,9 @@ export type Context = {
 };
 export type PendingImageDownload = {
     id: string;
-    fetchImage: () => Promise<ImagePars | undefined>;
+    frozenSandbox: SandBox;
+    frozenCtx?: Context;
+    code: string;
     cmd: string;
     extentNode?: NonTextNode;
     picExtNode?: NonTextNode;
