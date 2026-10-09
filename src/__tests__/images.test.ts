@@ -3,7 +3,7 @@
 import path from 'path';
 import fs from 'fs';
 import { PNG } from 'pngjs';
-import { createReport } from '../index';
+import { createReport, NullishCommandResultError } from '../index';
 import { Image, ImagePars } from '../types';
 import { setDebugLogSink } from '../debug';
 import JSZip from 'jszip';
@@ -1185,6 +1185,62 @@ if (process.env.DEBUG) setDebugLogSink(console.log);
             imageConcurrency: 0,
           })
         ).rejects.toThrow('imageConcurrency must be a positive integer');
+      });
+
+      // The inline path surfaces whatever jsSandbox threw. The parallel path
+      // wrapped it a second time in ImageError, nesting the message and
+      // replacing the original error class, so `instanceof` checks and
+      // `err.command` differed between the two modes for the same failure.
+      it('surfaces the same error class and message in inline and parallel modes', async () => {
+        const run = async (imageConcurrency?: number) => {
+          try {
+            await createReport({
+              template: simpleTemplate,
+              noSandbox,
+              data: {},
+              additionalJsContext: {
+                injectImg: () => {
+                  throw new Error('boom');
+                },
+              },
+              ...(imageConcurrency != null ? { imageConcurrency } : {}),
+            });
+            return 'no error thrown';
+          } catch (e) {
+            const err = e as Error;
+            return `${err.constructor.name}: ${err.message}`;
+          }
+        };
+
+        const inline = await run();
+        expect(inline).toBe(
+          "CommandExecutionError: Error executing command 'injectImg()': Error: boom"
+        );
+        expect(await run(4)).toBe(inline);
+      });
+
+      it('preserves the error class of a nullish image result in parallel mode', async () => {
+        const run = async (imageConcurrency?: number) => {
+          try {
+            await createReport({
+              template: simpleTemplate,
+              noSandbox,
+              data: {},
+              rejectNullish: true,
+              additionalJsContext: { injectImg: () => null },
+              ...(imageConcurrency != null ? { imageConcurrency } : {}),
+            });
+            return null;
+          } catch (e) {
+            return e as Error;
+          }
+        };
+
+        const inline = await run();
+        const parallel = await run(4);
+        expect(inline).toBeInstanceOf(NullishCommandResultError);
+        expect(parallel).toBeInstanceOf(NullishCommandResultError);
+        expect(parallel?.message).toBe(inline?.message);
       });
 
       it('parallel mode propagates errors when failFast is true (default)', async () => {

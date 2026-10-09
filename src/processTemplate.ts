@@ -1401,19 +1401,25 @@ export async function resolvePendingImages(
       // Remove orphaned placeholder node from the output tree
       removeDrawingNode(pending);
       const error = result.reason;
-      const imgError = new ImageError(
-        error instanceof Error ? error : new Error(String(error)),
-        pending.cmd
-      );
+      // runUserJsAndGetRaw has already produced the error the inline path would
+      // surface -- CommandExecutionError for a throwing expression, a typed
+      // NullishCommandResultError for rejectNullish. Wrapping it again in
+      // ImageError would nest the message and erase the class, so the same
+      // failure would look different depending on which mode the caller chose.
+      // (Image *data* failures are different: applyImageData throws raw, and the
+      // catch below wraps it, matching what processImage does inline.)
+      const evalError = isError(error)
+        ? error
+        : new ImageError(new Error(String(error)), pending.cmd);
       if (ctx.options.errorHandler != null) {
         await ctx.options.errorHandler(
-          imgError,
+          evalError,
           pending.errorHandlerCommand ?? pending.cmd
         );
       } else if (ctx.options.failFast) {
-        throw imgError;
+        throw evalError;
       } else {
-        errors.push(imgError);
+        errors.push(evalError);
       }
       continue;
     }
