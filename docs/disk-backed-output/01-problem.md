@@ -72,6 +72,9 @@ scales with page count only.
   streaming template evaluation, which is a fundamentally larger redesign.
 - **Browser.** Explicitly excluded. See `04-risks-and-testing.md` for how the
   browser bundle is kept clean.
+- **Media compression method (STORE vs DEFLATE).** Orthogonal to storage
+  location, applies to both routes, and changing it would blunt the equivalence
+  test. Deferred to its own follow-up - see `02-design.md`.
 - **Letting users return `data: { path }` from IMAGE functions.** Considered and
   dropped: in parallel mode in-flight bytes are already bounded at
   `imageConcurrency x avg` ~= 10 MB, which does not justify a public API

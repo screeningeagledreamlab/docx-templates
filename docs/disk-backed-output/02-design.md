@@ -169,10 +169,30 @@ This is why cleanup lives in the outer `finally` and never inline, and why the
 existing `delete images[imageId]` (`main.ts:547`) must **not** become an
 `unlink`.
 
-## Adjacent, behind its own flag
+## Explicitly deferred: media compression method
 
-Media entries are already-compressed PNG/JPEG; DEFLATE-ing them is wasted CPU.
-`zip.file(..., { compression: 'STORE' })` is a cheap win on generation time, but
-it makes the `.docx` larger - an output change, not a memory change. It goes
-behind its own `storeMedia?: boolean` (default `false`) rather than being folded
-silently into this feature.
+DEFLATE-ing already-compressed PNG/JPEG is wasted CPU, and switching those
+entries to STORE is a real win on generation time. It is **not part of this
+project.**
+
+Two reasons:
+
+1. **It is orthogonal.** The per-file compression option is set at the
+   `zip.file()` call in `processImages` (`main.ts:533`), which runs identically
+   in both modes. It has nothing to do with where the bytes came from, so it
+   does not belong in a spec about storage location.
+2. **It would blunt the equivalence test.** Changing the compression method
+   changes the output bytes for every existing caller. Landing it alongside the
+   `emitXml` rewrite means Test 1 can no longer distinguish "the XML emitter is
+   wrong" from "the compression method changed" - which is precisely the signal
+   that test exists to give.
+
+When it is picked up separately, the right shape is **automatic and
+per-extension**, not a boolean:
+
+| Extension | Already compressed | DEFLATE level 1 buys | Choice |
+|---|---|---|---|
+| `.png` `.gif` `.jpg` `.jpeg` | yes | ~0-2% | STORE |
+| `.svg` | no, it is text | 50-80% | DEFLATE |
+
+A single flag would force a bad choice for one of the two groups.
