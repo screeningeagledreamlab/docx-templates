@@ -9,6 +9,8 @@ import {
 import fs from 'fs';
 import { setDebugLogSink } from '../debug';
 import { findHighestImgId } from '../processTemplate';
+import { buildXml, emitXml } from '../xml';
+import { newNonTextNode, newTextNode } from '../reportUtils';
 
 if (process.env.DEBUG) setDebugLogSink(console.log);
 
@@ -83,5 +85,66 @@ describe('findHighestImgId', () => {
     );
     const { jsTemplate } = await parseTemplate(template);
     expect(findHighestImgId(jsTemplate)).toBe(3);
+  });
+});
+
+describe('emitXml', () => {
+  const opts = { literalXmlDelimiter: '||', indentXml: false };
+
+  it('emits a self-closing tag for a childless node', () => {
+    const node = newNonTextNode('w:br', {});
+    expect(buildXml(node, opts).toString('utf-8')).toBe(
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:br/>'
+    );
+  });
+
+  it('emits attributes in insertion order, escaped', () => {
+    const node = newNonTextNode('w:t', { a: '1', b: '<&>' });
+    expect(buildXml(node, opts).toString('utf-8')).toBe(
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<w:t a="1" b="&lt;&amp;&gt;"/>'
+    );
+  });
+
+  it('emits nested children and escapes text', () => {
+    const text = newTextNode('a < b & c');
+    const t = newNonTextNode('w:t', {}, [text]);
+    text._parent = t;
+    expect(buildXml(t, opts).toString('utf-8')).toBe(
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<w:t>a &lt; b &amp; c</w:t>'
+    );
+  });
+
+  it('indents nested nodes when indentXml is true', () => {
+    const inner = newNonTextNode('w:br', {});
+    const outer = newNonTextNode('w:p', {}, [inner]);
+    inner._parent = outer;
+    const indented = { literalXmlDelimiter: '||', indentXml: true };
+    expect(buildXml(outer, indented).toString('utf-8')).toBe(
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '\n<w:p>\n  <w:br/>\n</w:p>'
+    );
+  });
+
+  it('does not recurse: handles a 50000-deep tree without stack overflow', () => {
+    const root = newNonTextNode('n0', {});
+    let cur = root;
+    for (let i = 1; i < 50000; i++) {
+      const child = newNonTextNode(`n${i}`, {});
+      child._parent = cur;
+      cur._children.push(child);
+      cur = child;
+    }
+    expect(() => buildXml(root, opts)).not.toThrow();
+  });
+
+  it('yields incrementally rather than building one string', () => {
+    const inner = newNonTextNode('w:br', {});
+    const outer = newNonTextNode('w:p', {}, [inner]);
+    inner._parent = outer;
+    const chunks = Array.from(emitXml(outer, opts));
+    expect(chunks.length).toBeGreaterThan(2);
+    expect(chunks.join('')).toBe(buildXml(outer, opts).toString('utf-8'));
   });
 });

@@ -1,5 +1,5 @@
 import sax, { QualifiedAttribute } from 'sax';
-import { Node } from './types';
+import { Node, NonTextNode } from './types';
 import { logger } from './debug';
 
 const parseXml = (templateXml: string): Promise<Node> => {
@@ -54,48 +54,86 @@ type XmlOptions = {
   indentXml: boolean;
 };
 
-function buildXml(
-  node: Node,
-  options: XmlOptions,
-  indent: string = '',
-  firstRun: boolean = true
-): Buffer {
-  const xml =
-    indent.length || !firstRun
-      ? ''
-      : '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+type Frame = {
+  node: Node;
+  indent: string;
+  // -1 = not yet opened; otherwise index of the next child to visit
+  i: number;
+  lastChildIsNode: boolean;
+};
 
-  const xmlBuffers = [Buffer.from(xml, 'utf-8')];
-  if (node._fTextNode)
-    xmlBuffers.push(Buffer.from(sanitizeText(node._text, options)));
-  else {
-    let attrs = '';
-    const nodeAttrs = node._attrs;
-    Object.keys(nodeAttrs).forEach(key => {
-      attrs += ` ${key}="${sanitizeAttr(nodeAttrs[key])}"`;
-    });
-    const fHasChildren = node._children.length > 0;
-    const suffix = fHasChildren ? '' : '/';
+/**
+ * Emit a node tree as XML string chunks.
+ *
+ * Iterative (explicit stack) rather than recursive: the previous implementation
+ * called Buffer.concat at every node, which allocated O(depth x size), and it
+ * blew the JS stack on deeply nested documents.
+ *
+ * This is the single source of truth for XML serialisation. `buildXml` and
+ * `writeXml` (src/diskSinks.ts) are both thin consumers of it, so their output
+ * is byte-identical by construction.
+ */
+export function* emitXml(root: Node, options: XmlOptions): Generator<string> {
+  yield '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 
-    // Conditionally add newlines and indentation based on indentXml option
-    const newline = options.indentXml ? `\n${indent}` : '';
-    xmlBuffers.push(Buffer.from(`${newline}<${node._tag}${attrs}${suffix}>`));
+  const stack: Frame[] = [
+    { node: root, indent: '', i: -1, lastChildIsNode: false },
+  ];
 
-    let fLastChildIsNode = false;
-    node._children.forEach(child => {
-      xmlBuffers.push(
-        buildXml(child, options, options.indentXml ? `${indent}  ` : '', false)
-      );
-      fLastChildIsNode = !child._fTextNode;
-    });
-    if (fHasChildren) {
-      // Only add indentation if indentXml is true and last child is a node
-      const indent2 =
-        options.indentXml && fLastChildIsNode ? `\n${indent}` : '';
-      xmlBuffers.push(Buffer.from(`${indent2}</${node._tag}>`));
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1];
+    const node = frame.node;
+
+    // Opening pass
+    if (frame.i === -1) {
+      if (node._fTextNode) {
+        yield sanitizeText(node._text, options);
+        stack.pop();
+        continue;
+      }
+      let attrs = '';
+      const nodeAttrs = node._attrs;
+      Object.keys(nodeAttrs).forEach(key => {
+        attrs += ` ${key}="${sanitizeAttr(nodeAttrs[key])}"`;
+      });
+      const fHasChildren = node._children.length > 0;
+      const suffix = fHasChildren ? '' : '/';
+      const newline = options.indentXml ? `\n${frame.indent}` : '';
+      yield `${newline}<${node._tag}${attrs}${suffix}>`;
+      if (!fHasChildren) {
+        stack.pop();
+        continue;
+      }
+      frame.i = 0;
+      continue;
     }
+
+    // Child pass
+    if (frame.i < node._children.length) {
+      const child = node._children[frame.i];
+      frame.lastChildIsNode = !child._fTextNode;
+      frame.i += 1;
+      stack.push({
+        node: child,
+        indent: options.indentXml ? `${frame.indent}  ` : '',
+        i: -1,
+        lastChildIsNode: false,
+      });
+      continue;
+    }
+
+    // Closing pass
+    // By construction, only non-text nodes reach this point: text nodes are
+    // popped in the opening pass above, before ever being assigned a frame.i.
+    const indent2 =
+      options.indentXml && frame.lastChildIsNode ? `\n${frame.indent}` : '';
+    yield `${indent2}</${(node as NonTextNode)._tag}>`;
+    stack.pop();
   }
-  return Buffer.concat(xmlBuffers);
+}
+
+function buildXml(node: Node, options: XmlOptions): Buffer {
+  return Buffer.from(Array.from(emitXml(node, options)).join(''), 'utf-8');
 }
 
 // MEMORY OPTIMIZATION: Combined regex for XML entity escaping (single pass instead of multiple)
