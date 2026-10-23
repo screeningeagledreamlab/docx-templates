@@ -89,3 +89,17 @@ export class UnterminatedForLoopError extends Error {
     );
   }
 }
+
+/**
+ * Thrown when a disk-backed operation fails (spooling, XML writing, or zip
+ * output). Wraps the underlying fs/stream error so callers see a library error
+ * rather than a bare ENOSPC/EACCES.
+ */
+export class ReportOutputError extends Error {
+  cause: unknown;
+  constructor(msg: string, cause: unknown) {
+    super(msg);
+    Object.setPrototypeOf(this, ReportOutputError.prototype);
+    this.cause = cause;
+  }
+}

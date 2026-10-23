@@ -2,7 +2,13 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { lazyFileStream } from '../diskSinks';
+import {
+  lazyFileStream,
+  makeRunDir,
+  cleanupRunDir,
+  writeXml,
+} from '../diskSinks';
+import { buildXml, parseXml } from '../xml';
 
 const read = (s: NodeJS.ReadableStream): Promise<Buffer> =>
   new Promise((resolve, reject) => {
@@ -67,5 +73,88 @@ describe('lazyFileStream', () => {
     await new Promise(r => setImmediate(r));
     const buf = await read(s);
     expect(buf.length).toBe(200000);
+  });
+});
+
+describe('makeRunDir / cleanupRunDir', () => {
+  it('creates a unique run dir with media/ and xml/ subdirs', async () => {
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'runroot-'));
+    const a = await makeRunDir(root);
+    const b = await makeRunDir(root);
+    expect(a).not.toBe(b);
+    expect(fs.existsSync(path.join(a, 'media'))).toBe(true);
+    expect(fs.existsSync(path.join(a, 'xml'))).toBe(true);
+    await cleanupRunDir(a);
+    await cleanupRunDir(b);
+    // The caller-supplied root must SURVIVE cleanup.
+    expect(fs.existsSync(root)).toBe(true);
+    await fs.promises.rm(root, { recursive: true, force: true });
+  });
+
+  it('creates the root itself when it does not exist', async () => {
+    const root = path.join(os.tmpdir(), `runroot-missing-${Date.now()}`);
+    const runDir = await makeRunDir(root);
+    expect(fs.existsSync(runDir)).toBe(true);
+    await fs.promises.rm(root, { recursive: true, force: true });
+  });
+
+  it('cleanupRunDir never throws, even on a missing path', async () => {
+    await expect(
+      cleanupRunDir(path.join(os.tmpdir(), 'definitely-not-here-xyz'))
+    ).resolves.toBeUndefined();
+    await expect(cleanupRunDir(undefined)).resolves.toBeUndefined();
+  });
+});
+
+describe('writeXml', () => {
+  const opts = { literalXmlDelimiter: '||', indentXml: false };
+
+  it('produces bytes identical to buildXml', async () => {
+    const xml =
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<root a="1"><child>hello &amp; goodbye</child><empty/></root>';
+    const node = await parseXml(xml);
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'wx-'));
+    const dest = path.join(dir, 'out.xml');
+
+    await writeXml(node, opts, dest);
+
+    const fromDisk = await fs.promises.readFile(dest);
+    expect(fromDisk.equals(buildXml(node, opts))).toBe(true);
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  });
+
+  it('round-trips non-ASCII text as UTF-8', async () => {
+    const xml =
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<r><t>café 漢字 “smart”</t></r>';
+    const node = await parseXml(xml);
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'wx-'));
+    const dest = path.join(dir, 'out.xml');
+
+    await writeXml(node, opts, dest);
+
+    const fromDisk = await fs.promises.readFile(dest);
+    expect(fromDisk.equals(buildXml(node, opts))).toBe(true);
+    expect(fromDisk.toString('utf-8')).toContain('café 漢字');
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  });
+
+  it('handles a document larger than one write buffer', async () => {
+    const children = Array.from(
+      { length: 20000 },
+      (_, i) => `<c i="${i}">text ${i}</c>`
+    ).join('');
+    const node = await parseXml(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><r>${children}</r>`
+    );
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'wx-'));
+    const dest = path.join(dir, 'big.xml');
+
+    await writeXml(node, opts, dest);
+
+    const fromDisk = await fs.promises.readFile(dest);
+    expect(fromDisk.equals(buildXml(node, opts))).toBe(true);
+    await fs.promises.rm(dir, { recursive: true, force: true });
   });
 });

@@ -49,7 +49,7 @@ const parseXml = (templateXml: string): Promise<Node> => {
   });
 };
 
-type XmlOptions = {
+export type XmlOptions = {
   literalXmlDelimiter: string;
   indentXml: boolean;
 };
