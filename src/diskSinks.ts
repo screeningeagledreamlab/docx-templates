@@ -126,7 +126,17 @@ export async function writeXml(
       if (!ws.write(buffered, 'utf-8')) await once(ws, 'drain');
     }
     ws.end();
-    await once(ws, 'finish');
+    // Wait for 'close', not 'finish'. 'finish' only means the data has been
+    // flushed to the OS -- the underlying fs.close() (autoClose defaults to
+    // true) happens after that, so `ws.closed` can still be false when
+    // 'finish' fires. Callers (e.g. cleanupRunDir) rely on the fd actually
+    // being closed by the time this promise resolves: on Windows a file with
+    // an open fd cannot be deleted, so racing ahead on 'finish' could make
+    // cleanup silently fail to remove the run directory. 'close' fires after
+    // 'finish' and is emitted asynchronously, so attaching the listener here
+    // (after ws.end()) cannot miss it; events.once still rejects if the
+    // stream emits 'error' while we wait.
+    await once(ws, 'close');
   } catch (e) {
     ws.destroy();
     throw new ReportOutputError(`Could not write XML to ${dest}`, e);

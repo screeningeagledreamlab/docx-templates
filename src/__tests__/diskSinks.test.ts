@@ -157,4 +157,26 @@ describe('writeXml', () => {
     expect(fromDisk.equals(buildXml(node, opts))).toBe(true);
     await fs.promises.rm(dir, { recursive: true, force: true });
   });
+
+  it('produces bytes identical to buildXml for non-ASCII content crossing the write-chunk threshold', async () => {
+    // Many multi-byte children so the 64KB flush boundary falls in the middle
+    // of the document multiple times, including potentially mid multi-byte
+    // character territory from a naive byte-counting implementation.
+    const children = Array.from(
+      { length: 5000 },
+      (_, i) => `<c i="${i}">café 漢字 — ü ${i}</c>`
+    ).join('');
+    const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><r>${children}</r>`;
+    const node = await parseXml(xml);
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'wx-'));
+    const dest = path.join(dir, 'big-nonascii.xml');
+
+    await writeXml(node, opts, dest);
+
+    const fromDisk = await fs.promises.readFile(dest);
+    const expected = buildXml(node, opts);
+    expect(expected.length).toBeGreaterThan(64 * 1024 * 3);
+    expect(fromDisk.equals(expected)).toBe(true);
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  });
 });
