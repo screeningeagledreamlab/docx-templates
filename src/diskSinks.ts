@@ -4,7 +4,7 @@ import { randomBytes } from 'crypto';
 import os from 'os';
 import path from 'path';
 import { once } from 'events';
-import { Node } from './types';
+import { Node, Image, SpooledImage } from './types';
 import { emitXml, XmlOptions } from './xml';
 import { ReportOutputError } from './errors';
 import { logger } from './debug';
@@ -141,4 +141,31 @@ export async function writeXml(
     ws.destroy();
     throw new ReportOutputError(`Could not write XML to ${dest}`, e);
   }
+}
+
+/**
+ * Spool one image's bytes to the run dir, returning a file reference instead of
+ * the bytes. Returns the image untouched when disk-backed mode is off.
+ *
+ * Base64 input is decoded here, which also sheds its 1.33x size overhead.
+ */
+export async function storeImage(
+  runDir: string | undefined,
+  id: string,
+  img: Image
+): Promise<Image | SpooledImage> {
+  if (runDir == null) return img;
+
+  const bytes =
+    typeof img.data === 'string'
+      ? Buffer.from(img.data, 'base64')
+      : Buffer.from(img.data as ArrayBuffer);
+
+  const file = path.join(runDir, 'media', `${id}${img.extension}`);
+  try {
+    await fsp.writeFile(file, bytes);
+  } catch (e) {
+    throw new ReportOutputError(`Could not spool image ${id} to ${file}`, e);
+  }
+  return { extension: img.extension, file };
 }

@@ -7,8 +7,10 @@ import {
   makeRunDir,
   cleanupRunDir,
   writeXml,
+  storeImage,
 } from '../diskSinks';
 import { buildXml, parseXml } from '../xml';
+import { Image, SpooledImage } from '../types';
 
 const read = (s: NodeJS.ReadableStream): Promise<Buffer> =>
   new Promise((resolve, reject) => {
@@ -178,5 +180,56 @@ describe('writeXml', () => {
     expect(expected.length).toBeGreaterThan(64 * 1024 * 3);
     expect(fromDisk.equals(expected)).toBe(true);
     await fs.promises.rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe('storeImage', () => {
+  it('returns the image unchanged when there is no run dir', async () => {
+    const img: Image = { extension: '.png', data: Buffer.from([1, 2, 3]) };
+    const stored = await storeImage(undefined, 'img1', img);
+    expect(stored).toBe(img);
+  });
+
+  it('spools binary data to <runDir>/media and returns a file reference', async () => {
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'si-'));
+    const runDir = await makeRunDir(root);
+    const img: Image = { extension: '.png', data: Buffer.from([9, 8, 7]) };
+
+    const stored = (await storeImage(runDir, 'img1', img)) as SpooledImage;
+
+    expect(stored.extension).toBe('.png');
+    expect(stored.file).toContain('media');
+    expect(await fs.promises.readFile(stored.file)).toEqual(
+      Buffer.from([9, 8, 7])
+    );
+    await fs.promises.rm(root, { recursive: true, force: true });
+  });
+
+  it('decodes base64 input on the way to disk', async () => {
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'si-'));
+    const runDir = await makeRunDir(root);
+    const img: Image = { extension: '.gif', data: 'bm90aGluZwo=' };
+
+    const stored = (await storeImage(runDir, 'img2', img)) as SpooledImage;
+
+    expect(await fs.promises.readFile(stored.file)).toEqual(
+      Buffer.from('bm90aGluZwo=', 'base64')
+    );
+    await fs.promises.rm(root, { recursive: true, force: true });
+  });
+
+  it('gives each image id a distinct file', async () => {
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'si-'));
+    const runDir = await makeRunDir(root);
+    const a = (await storeImage(runDir, 'img1', {
+      extension: '.png',
+      data: Buffer.from([1]),
+    })) as SpooledImage;
+    const b = (await storeImage(runDir, 'img2', {
+      extension: '.png',
+      data: Buffer.from([2]),
+    })) as SpooledImage;
+    expect(a.file).not.toBe(b.file);
+    await fs.promises.rm(root, { recursive: true, force: true });
   });
 });

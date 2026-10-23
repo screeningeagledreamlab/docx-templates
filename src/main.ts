@@ -1,4 +1,4 @@
-import { zipLoad, zipGetText, zipSetText, zipSave } from './zip';
+import { zipLoad, zipGetText, zipSetText, zipSave, zipSetStream } from './zip';
 import { parseXml, buildXml } from './xml';
 import preprocessTemplate from './preprocessTemplate';
 import {
@@ -525,14 +525,17 @@ const processImages = async (
   const relsPath = `${TEMPLATE_PATH}/_rels/${documentComponent}.rels`;
   const rels = await getRelsFromZip(zip, relsPath);
   for (const imageId of imageIds) {
-    const { extension, data: imgData } = images[imageId];
+    const img = images[imageId];
+    const { extension } = img;
     const imgName = `template_${documentComponent}_${imageId}${extension}`;
     logger.debug(`Writing image ${imageId} (${imgName})...`);
     const imgPath = `${TEMPLATE_PATH}/media/${imgName}`;
-    if (typeof imgData === 'string') {
-      zip.file(imgPath, imgData, { base64: true });
+    if ('file' in img) {
+      zipSetStream(zip, imgPath, img.file);
+    } else if (typeof img.data === 'string') {
+      zip.file(imgPath, img.data, { base64: true });
     } else {
-      zip.file(imgPath, imgData, { binary: true });
+      zip.file(imgPath, img.data, { binary: true });
     }
     addChild(
       rels,

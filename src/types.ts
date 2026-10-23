@@ -194,6 +194,14 @@ export type UserOptions = {
    * image-heavy reports, to protect a pattern templates can simply avoid.)
    */
   imageConcurrency?: number;
+  /**
+   * Write the report here instead of returning it in memory. Enables disk-backed mode.
+   */
+  outputPath?: string;
+  /**
+   * Root for the library's scratch files. Default: os.tmpdir()/docx-templates. Ignored without outputPath.
+   */
+  workDir?: string;
 };
 
 export type CreateReportOptions = {
@@ -214,6 +222,8 @@ export type CreateReportOptions = {
   compressionLevel: number;
   allowNestedIf: boolean;
   imageConcurrency?: number;
+  outputPath?: string;
+  workDir?: string;
 };
 
 export type SandBox = {
@@ -238,6 +248,8 @@ export type Context = {
   pendingImageNode?: { image: NonTextNode; caption?: NonTextNode[] };
   imageAndShapeIdIncrement: number;
   images: Images;
+  /** Scratch dir for disk-backed mode; undefined means keep image bytes in memory. */
+  runDir?: string;
   pendingLinkNode?: NonTextNode;
   linkId: number;
   links: Links;
@@ -286,7 +298,8 @@ export type PendingImageDownload = {
   captionParent?: Node; // Parent node where caption should be added
 };
 
-export type Images = { [id: string]: Image };
+export type SpooledImage = { extension: ImageExtension; file: string };
+export type Images = { [id: string]: Image | SpooledImage };
 export const ImageExtensions = [
   '.png',
   '.gif',

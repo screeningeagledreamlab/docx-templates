@@ -37,6 +37,7 @@ import {
   UnterminatedForLoopError,
 } from './errors';
 import { logger } from './debug';
+import { storeImage } from './diskSinks';
 import pLimit from 'p-limit';
 
 // Default concurrency limit for parallel image downloads
@@ -44,7 +45,8 @@ const DEFAULT_IMAGE_CONCURRENCY = 10;
 
 export function newContext(
   options: CreateReportOptions,
-  imageAndShapeIdIncrement = 0
+  imageAndShapeIdIncrement: number = 0,
+  runDir?: string
 ): Context {
   return {
     gCntIf: 0,
@@ -60,6 +62,7 @@ export function newContext(
     },
     imageAndShapeIdIncrement,
     images: {},
+    runDir,
     linkId: 0,
     links: {},
     htmlId: 0,
@@ -837,7 +840,7 @@ const processCmd: CommandProcessor = async (
           );
           if (img != null) {
             try {
-              processImage(ctx, img);
+              await processImage(ctx, img);
             } catch (e) {
               if (!isError(e)) throw e;
               throw new ImageError(e, cmd);
@@ -1105,12 +1108,12 @@ const processEndForIf = (
   }
 };
 
-const imageToContext = (ctx: Context, img: Image) => {
+const imageToContext = async (ctx: Context, img: Image) => {
   validateImage(img);
   ctx.imageAndShapeIdIncrement += 1;
   const id = String(ctx.imageAndShapeIdIncrement);
   const relId = `img${id}`;
-  ctx.images[relId] = img;
+  ctx.images[relId] = await storeImage(ctx.runDir, relId, img);
   return relId;
 };
 
@@ -1251,7 +1254,7 @@ const buildPendingImageNode = (
  * Apply resolved image data to a pending image's placeholder XML nodes.
  * Shared by both inline (processImage) and parallel (resolvePendingImages) paths.
  */
-const applyImageData = (
+const applyImageData = async (
   ctx: Context,
   imagePars: ImagePars,
   pending: PendingImageDownload
@@ -1297,10 +1300,10 @@ const applyImageData = (
     };
 
     // Store the SVG with its original ID
-    ctx.images[pending.id] = imgData;
+    ctx.images[pending.id] = await storeImage(ctx.runDir, pending.id, imgData);
 
     // Create a new ID for the thumbnail
-    const thumbRelId = imageToContext(ctx, thumbnail);
+    const thumbRelId = await imageToContext(ctx, thumbnail);
 
     // Add SVG extension to extLst
     if (pending.extLstNode) {
@@ -1325,7 +1328,7 @@ const applyImageData = (
     }
   } else {
     // Non-SVG image - just store the data
-    ctx.images[pending.id] = imgData;
+    ctx.images[pending.id] = await storeImage(ctx.runDir, pending.id, imgData);
   }
 };
 
@@ -1432,7 +1435,7 @@ export async function resolvePendingImages(
     }
 
     try {
-      applyImageData(ctx, imagePars, pending);
+      await applyImageData(ctx, imagePars, pending);
 
       // Handle caption if provided (parallel mode stores captionParent reference)
       if (imagePars.caption && pending.captionParent) {
@@ -1481,7 +1484,7 @@ function getImageData(imagePars: ImagePars): Image {
 }
 
 // Process image inline: build placeholder nodes, then immediately apply resolved data.
-const processImage = (ctx: Context, imagePars: ImagePars) => {
+const processImage = async (ctx: Context, imagePars: ImagePars) => {
   // Assign image ID (same as parallel path)
   ctx.imageAndShapeIdIncrement += 1;
   const id = String(ctx.imageAndShapeIdIncrement);
@@ -1494,7 +1497,7 @@ const processImage = (ctx: Context, imagePars: ImagePars) => {
 
   // Apply resolved data immediately (dimensions, alt text, rotation, SVG handling, storage)
   try {
-    applyImageData(ctx, imagePars, pending);
+    await applyImageData(ctx, imagePars, pending);
   } catch (e) {
     // Validation failed after the placeholder was published. Discard it, otherwise
     // the walk splices in an orphaned zero-dimension <w:drawing> whose r:embed
