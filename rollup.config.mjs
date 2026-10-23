@@ -5,10 +5,59 @@ import commonjs from '@rollup/plugin-commonjs'
 import dts from 'rollup-plugin-dts'
 import { defineConfig } from 'rollup'
 
+// src/main.ts reaches ./diskSinks through a dynamic import, taken only when the
+// Node-only `outputPath` option is set. diskSinks.ts imports fs/path/crypto/os,
+// which have no browser equivalent, so the browser build swaps in a stub that
+// throws if that code path is ever reached. Without this the bundle pulls in
+// those Node builtins (unresolved) and the dynamic import also forces rollup to
+// emit a second chunk, which `output.file` cannot express.
+const DISK_SINKS_STUB = '\0docx-templates:disk-sinks-stub'
+
+const DISK_SINKS_STUB_SOURCE = `
+const unsupported = () => {
+  throw new Error(
+    'docx-templates: disk-backed output (the outputPath option) requires Node.js and is not available in the browser build.'
+  )
+}
+export const lazyFileStream = unsupported
+export const makeRunDir = unsupported
+export const cleanupRunDir = unsupported
+export const writeXml = unsupported
+export const storeImage = unsupported
+export const zipSetStream = unsupported
+export const zipSaveToFile = unsupported
+export const assertOutputDirExists = unsupported
+export const xmlSpoolPath = unsupported
+export const removeFile = unsupported
+`
+
 export default defineConfig([{
   input: './src/browser.ts',
-  output: { file: './lib/browser.js', format: 'es', exports: 'named', sourcemap: true },
+  output: {
+    file: './lib/browser.js',
+    format: 'es',
+    exports: 'named',
+    sourcemap: true,
+    // The stub above is the only dynamic import in the graph; inlining it keeps
+    // the browser build a single file.
+    inlineDynamicImports: true
+  },
   plugins: [
+    // Must come before node-resolve, which would otherwise resolve
+    // './diskSinks' to the real module and pull Node builtins in with it.
+    {
+      name: 'disk-sinks-browser-stub',
+      resolveId(id) {
+        if (id === './diskSinks') {
+          return DISK_SINKS_STUB
+        }
+      },
+      load(id) {
+        if (id === DISK_SINKS_STUB) {
+          return DISK_SINKS_STUB_SOURCE
+        }
+      }
+    },
     node({
       preferBuiltins: false
     }),

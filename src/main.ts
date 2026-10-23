@@ -21,6 +21,7 @@ import {
   NonTextNode,
   CommandSummary,
   BuiltInCommand,
+  ReportFileResult,
 } from './types';
 import { addChild, newNonTextNode } from './reportUtils';
 import JSZip from 'jszip';
@@ -100,6 +101,18 @@ async function prepSecondaryXMLs(
 }
 
 /**
+ * Create a report and write it straight to `options.outputPath` instead of
+ * returning it in memory. Image bytes and document XML are spooled to a
+ * scratch directory and streamed into the zip, so peak memory no longer scales
+ * with the number of images. Node only.
+ *
+ * This overload must stay ABOVE the `Promise<Uint8Array>` one: it is the more
+ * specific of the two, and TypeScript picks the first that matches.
+ */
+async function createReport(
+  options: UserOptions & { outputPath: string }
+): Promise<ReportFileResult>;
+/**
  * Create Report from docx template
  *
  * example:
@@ -139,7 +152,7 @@ async function createReport(
 async function createReport(
   options: UserOptions,
   _probe?: 'JS' | 'XML'
-): Promise<Node | string | Uint8Array> {
+): Promise<Node | string | Uint8Array | ReportFileResult> {
   logger.debug('Report options:', { attach: options });
   const { template, data, queryVars } = options;
   const literalXmlDelimiter =
@@ -169,6 +182,8 @@ async function createReport(
     compressionLevel: options.compressionLevel ?? 1,
     allowNestedIf: options.allowNestedIf ?? false,
     imageConcurrency: options.imageConcurrency,
+    outputPath: options.outputPath,
+    workDir: options.workDir,
   };
   if (
     createOptions.imageConcurrency != null &&
@@ -182,92 +197,76 @@ async function createReport(
     indentXml: createOptions.indentXml,
   };
 
-  const { jsTemplate, mainDocument, zip, contentTypes } = await parseTemplate(
-    template
-  );
-
-  logger.debug('Preprocessing template...');
-  const prepped_template = preprocessTemplate(
-    jsTemplate,
-    createOptions.cmdDelimiter,
-    createOptions.preserveSpace
-  );
-
-  // Fetch the data that will fill in the template
-  let queryResult = null;
-  if (typeof data === 'function') {
-    logger.debug('Looking for the query in the template...');
-    const query = await extractQuery(prepped_template, createOptions);
-    logger.debug(`Query: ${query || 'no query found'}`);
-    queryResult = await data(query, queryVars);
-  } else {
-    queryResult = data;
+  // Disk-backed mode. `./diskSinks` is reached ONLY through this dynamic
+  // import: it pulls in fs/path/crypto/os, and main.ts is on the browser
+  // import chain (browser.ts -> index.ts -> main.ts), so a static import here
+  // would drag Node builtins into the browser bundle. The `typeof import(...)`
+  // below is a type position only and erases at compile time.
+  const diskMode = createOptions.outputPath != null;
+  let runDir: string | undefined;
+  let disk: typeof import('./diskSinks') | undefined;
+  if (diskMode && createOptions.outputPath != null) {
+    disk = await import('./diskSinks');
+    // Fail fast, before any template work, if the caller's directory is gone.
+    disk.assertOutputDirExists(createOptions.outputPath);
+    runDir = await disk.makeRunDir(createOptions.workDir);
   }
 
-  const prepped_secondaries = await prepSecondaryXMLs(
-    zip,
-    mainDocument,
-    createOptions
-  );
-
-  // Find the highest image IDs by scanning the main document and all secondary XMLs.
-  const highest_img_id = Math.max(
-    ...prepped_secondaries.map(([s, _]) => findHighestImgId(s)),
-    findHighestImgId(prepped_template)
-  );
-
-  // Process document.xml:
-  // - Generate the report
-  // - Build output XML and write it to disk
-  // - Images
-  logger.debug('Generating report...');
-  let ctx = newContext(createOptions, highest_img_id);
-  const result = await produceJsReport(queryResult, prepped_template, ctx);
-  if (result.status === 'errors') {
-    throw result.errors;
-  }
-
-  // Resolve pending image downloads only if parallel mode is enabled
-  if (createOptions.imageConcurrency != null) {
-    logger.debug('Resolving pending image downloads in parallel...');
-    const imageErrors = await resolvePendingImages(
-      ctx,
-      createOptions.imageConcurrency
+  // Everything below spools to `runDir`, so it all has to sit inside this
+  // try: the finally is the only thing that removes the scratch directory.
+  // cleanupRunDir never throws, so it can neither fail the call nor mask the
+  // error that brought us here. It must also run strictly AFTER the zip
+  // pipeline resolves -- JSZip reads the spooled entries lazily DURING
+  // generation, so deleting them any earlier truncates the output.
+  try {
+    const { jsTemplate, mainDocument, zip, contentTypes } = await parseTemplate(
+      template
     );
-    if (imageErrors.length > 0) throw imageErrors;
-  }
 
-  const {
-    report: report1,
-    images: images1,
-    links: links1,
-    htmls: htmls1,
-  } = result;
-  if (_probe === 'JS') return report1;
+    logger.debug('Preprocessing template...');
+    const prepped_template = preprocessTemplate(
+      jsTemplate,
+      createOptions.cmdDelimiter,
+      createOptions.preserveSpace
+    );
 
-  logger.debug('Converting report to XML...');
-  const reportXml = buildXml(report1, xmlOptions);
-  if (_probe === 'XML') return reportXml.toString('utf-8');
-  logger.debug('Writing report...');
-  zipSetText(zip, `${TEMPLATE_PATH}/${mainDocument}`, reportXml);
+    // Fetch the data that will fill in the template
+    let queryResult = null;
+    if (typeof data === 'function') {
+      logger.debug('Looking for the query in the template...');
+      const query = await extractQuery(prepped_template, createOptions);
+      logger.debug(`Query: ${query || 'no query found'}`);
+      queryResult = await data(query, queryVars);
+    } else {
+      queryResult = data;
+    }
 
-  let numImages = Object.keys(images1).length;
-  let numHtmls = Object.keys(htmls1).length;
-  await processImages(images1, mainDocument, zip, createOptions.indentXml);
-  await processLinks(links1, mainDocument, zip, createOptions.indentXml);
-  await processHtmls(htmls1, mainDocument, zip, createOptions.indentXml);
+    const prepped_secondaries = await prepSecondaryXMLs(
+      zip,
+      mainDocument,
+      createOptions
+    );
 
-  for (const [js, filePath] of prepped_secondaries) {
-    // Grab the last used (highest) image id from the main document's context, but create
-    // a fresh one for each secondary XML.
-    ctx = newContext(createOptions, ctx.imageAndShapeIdIncrement);
-    const result = await produceJsReport(queryResult, js, ctx);
+    // Find the highest image IDs by scanning the main document and all secondary XMLs.
+    const highest_img_id = Math.max(
+      ...prepped_secondaries.map(([s, _]) => findHighestImgId(s)),
+      findHighestImgId(prepped_template)
+    );
+
+    // Process document.xml:
+    // - Generate the report
+    // - Build output XML and write it to disk
+    // - Images
+    logger.debug('Generating report...');
+    let ctx = newContext(createOptions, highest_img_id, runDir, disk);
+    const result = await produceJsReport(queryResult, prepped_template, ctx);
     if (result.status === 'errors') {
       throw result.errors;
     }
 
-    // Resolve pending images for this secondary XML (only if parallel mode is enabled)
+    // Resolve pending image downloads only if parallel mode is enabled
     if (createOptions.imageConcurrency != null) {
+      logger.debug('Resolving pending image downloads in parallel...');
       const imageErrors = await resolvePendingImages(
         ctx,
         createOptions.imageConcurrency
@@ -276,73 +275,157 @@ async function createReport(
     }
 
     const {
-      report: report2,
-      images: images2,
-      links: links2,
-      htmls: htmls2,
+      report: report1,
+      images: images1,
+      links: links1,
+      htmls: htmls1,
     } = result;
-    const xml = buildXml(report2, xmlOptions);
-    zipSetText(zip, filePath, xml);
+    if (_probe === 'JS') return report1;
 
-    numImages += Object.keys(images2).length;
-    numHtmls += Object.keys(htmls2).length;
+    logger.debug('Converting report to XML...');
+    // Built lazily, and never through the disk sink: the probe is a
+    // development-only escape hatch that returns the XML as a string.
+    if (_probe === 'XML')
+      return buildXml(report1, xmlOptions).toString('utf-8');
+    logger.debug('Writing report...');
+    const mainPath = `${TEMPLATE_PATH}/${mainDocument}`;
+    if (diskMode && disk != null && runDir != null) {
+      const xmlFile = disk.xmlSpoolPath(runDir, mainDocument);
+      await disk.writeXml(report1, xmlOptions, xmlFile);
+      disk.zipSetStream(zip, mainPath, xmlFile);
+    } else {
+      zipSetText(zip, mainPath, buildXml(report1, xmlOptions));
+    }
 
-    const segments = filePath.split('/');
-    const documentComponent = segments[segments.length - 1];
+    let numImages = Object.keys(images1).length;
+    let numHtmls = Object.keys(htmls1).length;
     await processImages(
-      images2,
-      documentComponent,
+      images1,
+      mainDocument,
       zip,
-      createOptions.indentXml
+      createOptions.indentXml,
+      disk
     );
-    await processLinks(links2, mainDocument, zip, createOptions.indentXml);
-    await processHtmls(htmls2, mainDocument, zip, createOptions.indentXml);
-  }
+    await processLinks(links1, mainDocument, zip, createOptions.indentXml);
+    await processHtmls(htmls1, mainDocument, zip, createOptions.indentXml);
 
-  // Process [Content_Types].xml
-  if (numImages || numHtmls) {
-    logger.debug('Completing [Content_Types].xml...');
-
-    logger.debug('Content types', { attach: contentTypes });
-    const ensureContentType = (extension: string, contentType: string) => {
-      const children = contentTypes._children;
-      if (
-        children.filter(
-          o =>
-            !o._fTextNode &&
-            o._attrs.Extension?.toLowerCase() === extension?.toLowerCase()
-        ).length
-      ) {
-        return;
-      }
-      addChild(
-        contentTypes,
-        newNonTextNode('Default', {
-          Extension: extension,
-          ContentType: contentType,
-        })
+    for (const [js, filePath] of prepped_secondaries) {
+      // Grab the last used (highest) image id from the main document's context, but create
+      // a fresh one for each secondary XML.
+      ctx = newContext(
+        createOptions,
+        ctx.imageAndShapeIdIncrement,
+        runDir,
+        disk
       );
-    };
-    if (numImages) {
-      logger.debug('Completing [Content_Types].xml for IMAGES...');
-      ensureContentType('png', 'image/png');
-      ensureContentType('jpg', 'image/jpeg');
-      ensureContentType('jpeg', 'image/jpeg');
-      ensureContentType('gif', 'image/gif');
-      ensureContentType('bmp', 'image/bmp');
-      ensureContentType('svg', 'image/svg+xml');
-    }
-    if (numHtmls) {
-      logger.debug('Completing [Content_Types].xml for HTML...');
-      ensureContentType('html', 'text/html');
-    }
-    const finalContentTypesXml = buildXml(contentTypes, xmlOptions);
-    zipSetText(zip, CONTENT_TYPES_PATH, finalContentTypesXml);
-  }
+      const result = await produceJsReport(queryResult, js, ctx);
+      if (result.status === 'errors') {
+        throw result.errors;
+      }
 
-  logger.debug('Zipping...');
-  const output = await zipSave(zip, createOptions.compressionLevel);
-  return output;
+      // Resolve pending images for this secondary XML (only if parallel mode is enabled)
+      if (createOptions.imageConcurrency != null) {
+        const imageErrors = await resolvePendingImages(
+          ctx,
+          createOptions.imageConcurrency
+        );
+        if (imageErrors.length > 0) throw imageErrors;
+      }
+
+      const {
+        report: report2,
+        images: images2,
+        links: links2,
+        htmls: htmls2,
+      } = result;
+      const segments = filePath.split('/');
+      const documentComponent = segments[segments.length - 1];
+      if (diskMode && disk != null && runDir != null) {
+        const xmlFile = disk.xmlSpoolPath(runDir, documentComponent);
+        await disk.writeXml(report2, xmlOptions, xmlFile);
+        disk.zipSetStream(zip, filePath, xmlFile);
+      } else {
+        zipSetText(zip, filePath, buildXml(report2, xmlOptions));
+      }
+
+      numImages += Object.keys(images2).length;
+      numHtmls += Object.keys(htmls2).length;
+
+      await processImages(
+        images2,
+        documentComponent,
+        zip,
+        createOptions.indentXml,
+        disk
+      );
+      await processLinks(links2, mainDocument, zip, createOptions.indentXml);
+      await processHtmls(htmls2, mainDocument, zip, createOptions.indentXml);
+    }
+
+    // Process [Content_Types].xml
+    if (numImages || numHtmls) {
+      logger.debug('Completing [Content_Types].xml...');
+
+      logger.debug('Content types', { attach: contentTypes });
+      const ensureContentType = (extension: string, contentType: string) => {
+        const children = contentTypes._children;
+        if (
+          children.filter(
+            o =>
+              !o._fTextNode &&
+              o._attrs.Extension?.toLowerCase() === extension?.toLowerCase()
+          ).length
+        ) {
+          return;
+        }
+        addChild(
+          contentTypes,
+          newNonTextNode('Default', {
+            Extension: extension,
+            ContentType: contentType,
+          })
+        );
+      };
+      if (numImages) {
+        logger.debug('Completing [Content_Types].xml for IMAGES...');
+        ensureContentType('png', 'image/png');
+        ensureContentType('jpg', 'image/jpeg');
+        ensureContentType('jpeg', 'image/jpeg');
+        ensureContentType('gif', 'image/gif');
+        ensureContentType('bmp', 'image/bmp');
+        ensureContentType('svg', 'image/svg+xml');
+      }
+      if (numHtmls) {
+        logger.debug('Completing [Content_Types].xml for HTML...');
+        ensureContentType('html', 'text/html');
+      }
+      const finalContentTypesXml = buildXml(contentTypes, xmlOptions);
+      zipSetText(zip, CONTENT_TYPES_PATH, finalContentTypesXml);
+    }
+
+    logger.debug('Zipping...');
+    if (diskMode && disk != null && createOptions.outputPath != null) {
+      const outputPath = createOptions.outputPath;
+      try {
+        const bytes = await disk.zipSaveToFile(
+          zip,
+          outputPath,
+          createOptions.compressionLevel
+        );
+        return { path: outputPath, bytes };
+      } catch (e) {
+        // A truncated .docx is worse than no file, and we are the ones who
+        // created it. removeFile swallows its own errors so the original
+        // failure is what surfaces.
+        await disk.removeFile(outputPath);
+        throw e;
+      }
+    }
+    const output = await zipSave(zip, createOptions.compressionLevel);
+    return output;
+  } finally {
+    if (disk != null) await disk.cleanupRunDir(runDir);
+  }
 }
 
 /**

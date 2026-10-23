@@ -204,6 +204,12 @@ export type UserOptions = {
   workDir?: string;
 };
 
+/**
+ * What `createReport` resolves to in disk-backed mode (when `outputPath` is
+ * given): the path written and its final size in bytes.
+ */
+export type ReportFileResult = { path: string; bytes: number };
+
 export type CreateReportOptions = {
   cmdDelimiter: [string, string];
   literalXmlDelimiter: string;

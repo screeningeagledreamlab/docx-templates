@@ -54,6 +54,7 @@ Contributions are welcome!
 
 - [Installation](#installation)
 - [Node usage](#node-usage)
+  - [Disk-backed output (Node only)](#disk-backed-output-node-only)
 - [Deno usage](#deno-usage)
 - [Browser usage](#browser-usage)
   - [Polyfilled browser-ready bundle](#polyfilled-browser-ready-bundle)
@@ -239,6 +240,36 @@ const report = await createReport({
 ```
 
 Check out the [Node examples folder](https://github.com/guigrpa/docx-templates/tree/master/examples/example-node).
+
+## Disk-backed output (Node only)
+
+By default `createReport` returns the report as a `Uint8Array`, which means the
+whole document -- including every image -- is held in memory. For image-heavy
+reports you can have the library write to disk instead:
+
+```js
+const { path, bytes } = await createReport({
+  template,
+  data,
+  outputPath: '/var/reports/report.docx', // enables disk-backed mode
+  workDir: '/var/tmp/docx-templates',     // optional scratch root
+});
+```
+
+In this mode image bytes and document XML are spooled to a scratch directory
+and streamed into the zip, so peak memory no longer scales with the number of
+images. The bytes written are identical to what the in-memory path produces.
+
+**Ownership:** you own `outputPath` -- the library never deletes it after a
+successful run (on failure it removes the partial file, since a truncated
+`.docx` is worse than none). The library creates `<workDir>/<runId>/` and always
+removes it, success or failure. Your `workDir` root itself is never removed.
+
+**Sizing:** the scratch directory needs roughly as much free space as the total
+size of your images. In constrained environments -- AWS Lambda's `/tmp` defaults
+to 512 MB -- raise the ephemeral storage allocation accordingly.
+
+`outputPath` is not supported in the browser build, which has no filesystem.
 
 # Deno usage
 You can use docx-templates in Deno! Just follow the Browser guide and import the polyfilled docx-templates bundle, for example from unpkg:

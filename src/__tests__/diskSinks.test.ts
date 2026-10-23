@@ -11,6 +11,9 @@ import {
   storeImage,
   zipSetStream,
   zipSaveToFile,
+  assertOutputDirExists,
+  xmlSpoolPath,
+  removeFile,
 } from '../diskSinks';
 import { buildXml, parseXml } from '../xml';
 import { Image, SpooledImage } from '../types';
@@ -108,6 +111,50 @@ describe('makeRunDir / cleanupRunDir', () => {
       cleanupRunDir(path.join(os.tmpdir(), 'definitely-not-here-xyz'))
     ).resolves.toBeUndefined();
     await expect(cleanupRunDir(undefined)).resolves.toBeUndefined();
+  });
+});
+
+describe('assertOutputDirExists', () => {
+  it('passes when the parent directory exists', async () => {
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'aode-'));
+    expect(() =>
+      assertOutputDirExists(path.join(dir, 'report.docx'))
+    ).not.toThrow();
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  });
+
+  it('throws naming the missing directory', () => {
+    const missing = path.join(os.tmpdir(), 'definitely-not-here-xyz');
+    expect(() =>
+      assertOutputDirExists(path.join(missing, 'report.docx'))
+    ).toThrow(/output directory/i);
+  });
+});
+
+describe('xmlSpoolPath', () => {
+  it('puts the part under <runDir>/xml', () => {
+    expect(xmlSpoolPath(path.join('a', 'b'), 'document.xml')).toBe(
+      path.join('a', 'b', 'xml', 'document.xml')
+    );
+  });
+});
+
+describe('removeFile', () => {
+  it('removes an existing file', async () => {
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'rmf-'));
+    const file = path.join(dir, 'partial.docx');
+    await fs.promises.writeFile(file, 'junk');
+    await removeFile(file);
+    expect(fs.existsSync(file)).toBe(false);
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  });
+
+  it('never throws, even when the path cannot be removed', async () => {
+    // A directory: fsp.rm without `recursive` fails on it. removeFile runs on
+    // an error path and must not mask the error that got us there.
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'rmf-'));
+    await expect(removeFile(dir)).resolves.toBeUndefined();
+    await fs.promises.rm(dir, { recursive: true, force: true });
   });
 });
 

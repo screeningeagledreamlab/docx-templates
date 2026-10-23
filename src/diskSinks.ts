@@ -1,4 +1,9 @@
-import { createReadStream, createWriteStream, promises as fsp } from 'fs';
+import {
+  createReadStream,
+  createWriteStream,
+  existsSync,
+  promises as fsp,
+} from 'fs';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { stat } from 'fs/promises';
@@ -81,6 +86,47 @@ export async function makeRunDir(workDir?: string): Promise<string> {
     );
   }
   return runDir;
+}
+
+/**
+ * Throw if the parent directory of `outputPath` does not exist.
+ *
+ * Deliberately synchronous: this is the one fail-fast check, run before any
+ * template work happens, so a typo in the output path costs nothing.
+ *
+ * Lives here rather than in main.ts for the same reason zipSetStream does:
+ * main.ts is on the browser import chain (browser.ts -> index.ts -> main.ts),
+ * so a static `fs`/`path` import there would drag Node builtins into the
+ * browser bundle. main.ts reaches this only through the dynamic import.
+ */
+export function assertOutputDirExists(outputPath: string): void {
+  const dir = path.dirname(outputPath);
+  if (!existsSync(dir)) {
+    throw new ReportOutputError(
+      `The output directory ${dir} does not exist. Create it before calling createReport.`,
+      undefined
+    );
+  }
+}
+
+/** Where a spooled XML part lives inside the run dir. */
+export function xmlSpoolPath(runDir: string, name: string): string {
+  return path.join(runDir, 'xml', name);
+}
+
+/**
+ * Remove a file, swallowing any failure.
+ *
+ * Used to drop a partial output file after a failed run: a truncated .docx is
+ * worse than no file at all, and this runs on an error path, so it must never
+ * mask the error that got us there.
+ */
+export async function removeFile(file: string): Promise<void> {
+  try {
+    await fsp.rm(file, { force: true });
+  } catch (e) {
+    logger.debug(`Could not remove ${file}: ${String(e)}`);
+  }
 }
 
 /**

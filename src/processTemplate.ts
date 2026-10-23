@@ -69,7 +69,8 @@ async function storeImageViaCtx(
 export function newContext(
   options: CreateReportOptions,
   imageAndShapeIdIncrement: number = 0,
-  runDir?: string
+  runDir?: string,
+  disk?: typeof import('./diskSinks')
 ): Context {
   return {
     gCntIf: 0,
@@ -86,6 +87,7 @@ export function newContext(
     imageAndShapeIdIncrement,
     images: {},
     runDir,
+    disk,
     linkId: 0,
     links: {},
     htmlId: 0,

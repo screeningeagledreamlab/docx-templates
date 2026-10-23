@@ -41,7 +41,7 @@
     "lint-fix": "eslint --fix \"src/**/*.{js,jsx,ts,tsx}\""
   },
   "engines": {
-    "node": ">=6"
+    "node": ">=16"
   },
   "dependencies": {
     "jszip": "^3.10.1",
