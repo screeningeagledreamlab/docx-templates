@@ -252,6 +252,112 @@ describeUnlessRoot('disk-backed output, unopenable outputPath', () => {
   });
 });
 
+describe('disk-backed lifecycle', () => {
+  it('does not let cleanup mask the original error', async () => {
+    // Regression guard for the finally-block contract in main.ts: cleanupRunDir
+    // must never throw outward and must never replace the error that actually
+    // failed the run. A bare `.rejects.toThrow()` would still pass if cleanup
+    // swallowed the real failure and substituted a generic "cleanup failed"
+    // error, so this asserts the ORIGINAL message survives to the caller.
+    const template = await fs.promises.readFile(
+      path.join(FIXTURES, 'imageSimple.docx')
+    );
+    const dir = await mkOutDir();
+    const workDir = path.join(dir, 'work');
+    await fs.promises.mkdir(workDir);
+    const outputPath = path.join(dir, 'report.docx');
+
+    await expect(
+      createReport({
+        template,
+        outputPath,
+        workDir,
+        data: {},
+        additionalJsContext: {
+          injectImg: async () => {
+            throw new Error('the original failure');
+          },
+        },
+      })
+    ).rejects.toThrow(/the original failure/);
+
+    // The run dir is still cleaned up on this path, as on any other failure.
+    expect(await fs.promises.readdir(workDir)).toEqual([]);
+
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  });
+
+  it('supports concurrent reports sharing one workDir root', async () => {
+    // The per-run directory is named with random bytes specifically so that
+    // concurrent createReport calls against one shared workDir cannot collide
+    // or clobber each other's scratch files. Running 5 at once is what would
+    // catch a regression to a fixed/predictable run-dir name, or a cleanup
+    // that recursively removes the shared root instead of just its own run
+    // dir (which would delete a sibling run's in-flight scratch files).
+    const template = await fs.promises.readFile(
+      path.join(FIXTURES, 'imageSimple.docx')
+    );
+    const workDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'wd-'));
+    const outDir = await mkOutDir();
+
+    const results = await Promise.all(
+      [0, 1, 2, 3, 4].map(async i =>
+        createReport({
+          template,
+          outputPath: path.join(outDir, `r${i}.docx`),
+          workDir,
+          data: {},
+          additionalJsContext: await injectImgContext(),
+        })
+      )
+    );
+
+    expect(results).toHaveLength(5);
+    for (let i = 0; i < 5; i++) {
+      const outputPath = path.join(outDir, `r${i}.docx`);
+      expect(fs.existsSync(outputPath)).toBe(true);
+      // Each output must be a genuinely valid, independent docx, not just a
+      // file that happens to exist (e.g. an empty file left by a collision).
+      const zip = await JSZip.loadAsync(await fs.promises.readFile(outputPath));
+      expect(zip.file('word/document.xml')).not.toBeNull();
+    }
+    // Every per-run scratch dir cleaned up; shared root left untouched.
+    expect(await fs.promises.readdir(workDir)).toEqual([]);
+
+    await fs.promises.rm(workDir, { recursive: true, force: true });
+    await fs.promises.rm(outDir, { recursive: true, force: true });
+  }, 30000);
+
+  it('falls back to os.tmpdir()/docx-templates and still cleans up', async () => {
+    // No test above exercises the default workDir: every one of them passes
+    // an explicit workDir. This confirms the fallback path in makeRunDir
+    // (`workDir ?? path.join(os.tmpdir(), 'docx-templates')`) both runs and
+    // cleans up after itself, without assuming the default root is empty or
+    // exclusively ours (other tests/processes may share it).
+    const defaultRoot = path.join(os.tmpdir(), 'docx-templates');
+    await fs.promises.mkdir(defaultRoot, { recursive: true });
+    const before = new Set(await fs.promises.readdir(defaultRoot));
+
+    const template = await fs.promises.readFile(
+      path.join(FIXTURES, 'imageSimple.docx')
+    );
+    const outDir = await mkOutDir();
+
+    await createReport({
+      template,
+      outputPath: path.join(outDir, 'report.docx'),
+      data: {},
+      additionalJsContext: await injectImgContext(),
+    });
+
+    const after = await fs.promises.readdir(defaultRoot);
+    const added = after.filter(name => !before.has(name));
+    expect(added).toEqual([]);
+
+    await fs.promises.rm(outDir, { recursive: true, force: true });
+  });
+});
+
 describe('equivalence: disk-backed output matches in-memory output', () => {
   const png = () => fs.promises.readFile(path.join(FIXTURES, 'sample.png'));
   const svg = () => fs.promises.readFile(path.join(FIXTURES, 'sample.svg'));
