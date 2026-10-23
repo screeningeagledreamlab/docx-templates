@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import JSZip from 'jszip';
+import QR from 'qrcode';
 import { createReport } from '../index';
 
 const FIXTURES = path.join(__dirname, 'fixtures');
@@ -17,6 +18,50 @@ const injectImgContext = async () => ({
     extension: '.png' as const,
   }),
 });
+
+/**
+ * Unzip a docx and return a sorted map of entry name -> decompressed bytes.
+ *
+ * We compare UNZIPPED ENTRIES, never raw zip bytes: JSZip stamps `new Date()`
+ * on every entry it writes, so the DOS timestamps legitimately differ between
+ * two runs even in the same mode. A raw byte comparison would be flaky and
+ * would be testing the wrong thing.
+ */
+const entriesOf = async (data: Buffer | Uint8Array) => {
+  const zip = await JSZip.loadAsync(data);
+  const names = Object.keys(zip.files)
+    .filter(n => !zip.files[n].dir)
+    .sort();
+  const out: Record<string, Buffer> = {};
+  for (let i = 0; i < names.length; i++) {
+    const n = names[i];
+    out[n] = await zip.files[n].async('nodebuffer');
+  }
+  return out;
+};
+
+/**
+ * Assert that an in-memory docx and an on-disk docx contain the same entry
+ * names and that every entry's decompressed bytes are identical.
+ */
+const expectEquivalent = async (
+  inMemory: Buffer | Uint8Array,
+  onDisk: string
+): Promise<void> => {
+  const a = await entriesOf(inMemory);
+  const b = await entriesOf(await fs.promises.readFile(onDisk));
+
+  expect(Object.keys(b).sort()).toEqual(Object.keys(a).sort());
+  const names = Object.keys(a);
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
+    // Compare with a helpful message: a bare Buffer diff is unreadable.
+    expect({ name, equal: b[name].equals(a[name]) }).toEqual({
+      name,
+      equal: true,
+    });
+  }
+};
 
 describe('disk-backed output', () => {
   it('writes a valid docx to outputPath and reports its size', async () => {
@@ -103,18 +148,7 @@ describe('disk-backed output', () => {
     const outputPath = path.join(dir, 'report.docx');
     await createReport({ ...opts, outputPath });
 
-    const a = await JSZip.loadAsync(inMemory);
-    const b = await JSZip.loadAsync(await fs.promises.readFile(outputPath));
-    const names = (z: JSZip) =>
-      Object.keys(z.files)
-        .filter(n => !z.files[n].dir)
-        .sort();
-    expect(names(b)).toEqual(names(a));
-    for (const name of names(a)) {
-      const fromMemory = await a.files[name].async('nodebuffer');
-      const fromDisk = await b.files[name].async('nodebuffer');
-      expect([name, fromDisk.equals(fromMemory)]).toEqual([name, true]);
-    }
+    await expectEquivalent(inMemory, outputPath);
 
     await fs.promises.rm(dir, { recursive: true, force: true });
   });
@@ -215,5 +249,160 @@ describeUnlessRoot('disk-backed output, unopenable outputPath', () => {
     expect(await fs.promises.readdir(workDir)).toEqual([]);
 
     await fs.promises.rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe('equivalence: disk-backed output matches in-memory output', () => {
+  const png = () => fs.promises.readFile(path.join(FIXTURES, 'sample.png'));
+  const svg = () => fs.promises.readFile(path.join(FIXTURES, 'sample.svg'));
+
+  /**
+   * Each case exercises a distinct risk area in the disk-backed path:
+   *  - raster image            -> the plain spool + lazyFileStream path
+   *  - raster + imageConcurrency -> images resolved through p-limit workers
+   *                                  rather than inline
+   *  - SVG + thumbnail         -> the two-entry branch (svg plus its own
+   *                                thumbnail relId) in applyImageData
+   *  - base64 image            -> the base64-decode branch inside storeImage
+   *  - image caption           -> caption nodes appended to the tree AFTER
+   *                                image resolution
+   *  - non-ASCII text          -> UTF-8 encoding of the XML stream path,
+   *                                with no images involved at all
+   */
+  const cases: Array<{
+    name: string;
+    fixture: string;
+    options: () => Promise<Record<string, unknown>>;
+  }> = [
+    {
+      name: 'raster image',
+      fixture: 'imageSimple.docx',
+      options: async () => ({
+        data: {},
+        additionalJsContext: {
+          injectImg: async () => ({
+            width: 6,
+            height: 6,
+            data: await png(),
+            extension: '.png',
+          }),
+        },
+      }),
+    },
+    {
+      name: 'raster image with imageConcurrency set (parallel mode)',
+      fixture: 'imageSimple.docx',
+      options: async () => ({
+        data: {},
+        imageConcurrency: 4,
+        additionalJsContext: {
+          injectImg: async () => ({
+            width: 6,
+            height: 6,
+            data: await png(),
+            extension: '.png',
+          }),
+        },
+      }),
+    },
+    {
+      // imagesSVG.docx carries two IMAGE commands: svgImgFile() and
+      // svgImgStr(). Both must be supplied, each with its own thumbnail, so
+      // this exercises the two-entry (svg + thumbnail, separate relId) branch
+      // twice over.
+      name: 'SVG image with thumbnail',
+      fixture: 'imagesSVG.docx',
+      options: async () => {
+        const thumbnail = { data: await png(), extension: '.png' };
+        return {
+          data: {},
+          additionalJsContext: {
+            svgImgFile: async () => ({
+              width: 6,
+              height: 6,
+              data: await svg(),
+              extension: '.svg',
+              thumbnail,
+            }),
+            svgImgStr: async () => ({
+              width: 6,
+              height: 6,
+              data: Buffer.from(
+                '<svg xmlns="http://www.w3.org/2000/svg"><rect width="100" height="100"/></svg>'
+              ),
+              extension: '.svg',
+              thumbnail,
+            }),
+          },
+        };
+      },
+    },
+    {
+      name: 'base64-encoded image',
+      fixture: 'imageBase64.docx',
+      options: async () => ({
+        data: {},
+        additionalJsContext: {
+          qr: async (contents: string) => {
+            const dataUrl = await QR.toDataURL(contents, { width: 500 });
+            const data = dataUrl.slice('data:image/gif;base64,'.length);
+            return { width: 6, height: 6, data, extension: '.gif' };
+          },
+        },
+      }),
+    },
+    {
+      name: 'image with caption',
+      fixture: 'imageCaption.docx',
+      options: async () => ({
+        data: {},
+        additionalJsContext: {
+          injectImg: async (caption: boolean) => ({
+            width: 6,
+            height: 6,
+            data: await png(),
+            extension: '.png',
+            caption: caption ? 'The image caption!' : undefined,
+          }),
+        },
+      }),
+    },
+    {
+      name: 'non-ASCII text, no images',
+      fixture: 'for1.docx',
+      options: async () => ({
+        data: {
+          companies: [
+            { name: 'café' },
+            { name: '漢字テスト' },
+            { name: '“smart quotes” — em dash' },
+            { name: 'Ωmega ß ü' },
+          ],
+        },
+      }),
+    },
+  ];
+
+  cases.forEach(({ name, fixture, options }) => {
+    it(`produces identical entries for: ${name}`, async () => {
+      const template = await fs.promises.readFile(path.join(FIXTURES, fixture));
+      const base = await options();
+
+      const inMemory = (await createReport({
+        template,
+        ...base,
+      } as never)) as unknown as Uint8Array;
+
+      const dir = await mkOutDir();
+      const outputPath = path.join(dir, 'report.docx');
+      await createReport({
+        template,
+        outputPath,
+        ...base,
+      } as never);
+
+      await expectEquivalent(inMemory, outputPath);
+      await fs.promises.rm(dir, { recursive: true, force: true });
+    }, 20000);
   });
 });
