@@ -41,3 +41,12 @@ export declare class IncompleteConditionalStatementError extends Error {
 export declare class UnterminatedForLoopError extends Error {
     constructor(loop: LoopStatus);
 }
+/**
+ * Thrown when a disk-backed operation fails (spooling, XML writing, or zip
+ * output). Wraps the underlying fs/stream error so callers see a library error
+ * rather than a bare ENOSPC/EACCES.
+ */
+export declare class ReportOutputError extends Error {
+    cause: unknown;
+    constructor(msg: string, cause: unknown);
+}

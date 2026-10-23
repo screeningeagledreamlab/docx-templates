@@ -1,4 +1,4 @@
-import { UserOptions, Node, NonTextNode, CommandSummary } from './types';
+import { UserOptions, Node, NonTextNode, CommandSummary, ReportFileResult } from './types';
 import JSZip from 'jszip';
 export declare function parseTemplate(template: ArrayBuffer): Promise<{
     jsTemplate: Node;
@@ -6,6 +6,18 @@ export declare function parseTemplate(template: ArrayBuffer): Promise<{
     zip: JSZip;
     contentTypes: NonTextNode;
 }>;
+/**
+ * Create a report and write it straight to `options.outputPath` instead of
+ * returning it in memory. Image bytes and document XML are spooled to a
+ * scratch directory and streamed into the zip, so peak memory no longer scales
+ * with the number of images. Node only.
+ *
+ * This overload must stay ABOVE the `Promise<Uint8Array>` one: it is the more
+ * specific of the two, and TypeScript picks the first that matches.
+ */
+declare function createReport(options: UserOptions & {
+    outputPath: string;
+}): Promise<ReportFileResult>;
 /**
  * Create Report from docx template
  *

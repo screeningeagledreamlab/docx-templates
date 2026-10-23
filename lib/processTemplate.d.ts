@@ -1,5 +1,5 @@
 import { Node, ReportData, Context, CreateReportOptions, Images, Links, Htmls } from './types';
-export declare function newContext(options: CreateReportOptions, imageAndShapeIdIncrement?: number): Context;
+export declare function newContext(options: CreateReportOptions, imageAndShapeIdIncrement?: number, runDir?: string, disk?: typeof import('./diskSinks')): Context;
 export declare function extractQuery(template: Node, options: CreateReportOptions): Promise<string | undefined>;
 type ReportOutput = {
     status: 'success';

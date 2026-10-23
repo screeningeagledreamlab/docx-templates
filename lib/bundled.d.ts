@@ -1,4 +1,6 @@
 type Buffer = ArrayBufferLike;
+import * as __diskSinks from './diskSinks.js';
+
 interface QualifiedName {
     name: string;
     prefix: string;
@@ -188,6 +190,22 @@ type UserOptions = {
      * image-heavy reports, to protect a pattern templates can simply avoid.)
      */
     imageConcurrency?: number;
+    /**
+     * Write the report here instead of returning it in memory. Enables disk-backed mode.
+     */
+    outputPath?: string;
+    /**
+     * Root for the library's scratch files. Default: os.tmpdir()/docx-templates. Ignored without outputPath.
+     */
+    workDir?: string;
+};
+/**
+ * What `createReport` resolves to in disk-backed mode (when `outputPath` is
+ * given): the path written and its final size in bytes.
+ */
+type ReportFileResult = {
+    path: string;
+    bytes: number;
 };
 type CreateReportOptions = {
     cmdDelimiter: [string, string];
@@ -207,6 +225,8 @@ type CreateReportOptions = {
     compressionLevel: number;
     allowNestedIf: boolean;
     imageConcurrency?: number;
+    outputPath?: string;
+    workDir?: string;
 };
 type SandBox = {
     __code__: string | undefined;
@@ -232,6 +252,16 @@ type Context = {
     };
     imageAndShapeIdIncrement: number;
     images: Images;
+    /** Scratch dir for disk-backed mode; undefined means keep image bytes in memory. */
+    runDir?: string;
+    /**
+     * Handle to the Node-only disk module, set only when disk-backed mode is
+     * enabled (Task 6). Kept as a `typeof import(...)` type (erased at compile
+     * time, no runtime import) rather than a static import, because this module
+     * (types.ts, via processTemplate.ts) is on the browser import chain and
+     * diskSinks.ts pulls in fs/path/crypto/os.
+     */
+    disk?: typeof __diskSinks;
     pendingLinkNode?: NonTextNode;
     linkId: number;
     links: Links;
@@ -271,8 +301,12 @@ type PendingImageDownload = {
     drawingNode?: NonTextNode;
     captionParent?: Node;
 };
+type SpooledImage = {
+    extension: ImageExtension;
+    file: string;
+};
 type Images = {
-    [id: string]: Image;
+    [id: string]: Image | SpooledImage;
 };
 declare const ImageExtensions: readonly [".png", ".gif", ".jpg", ".jpeg", ".svg"];
 type ImageExtension = (typeof ImageExtensions)[number];
@@ -317,6 +351,18 @@ type CommandSummary = {
 type BuiltInCommand = (typeof BUILT_IN_COMMANDS)[number];
 declare const BUILT_IN_COMMANDS: readonly ["QUERY", "CMD_NODE", "ALIAS", "FOR", "END-FOR", "IF", "END-IF", "INS", "EXEC", "IMAGE", "LINK", "HTML"];
 
+/**
+ * Create a report and write it straight to `options.outputPath` instead of
+ * returning it in memory. Image bytes and document XML are spooled to a
+ * scratch directory and streamed into the zip, so peak memory no longer scales
+ * with the number of images. Node only.
+ *
+ * This overload must stay ABOVE the `Promise<Uint8Array>` one: it is the more
+ * specific of the two, and TypeScript picks the first that matches.
+ */
+declare function createReport(options: UserOptions & {
+    outputPath: string;
+}): Promise<ReportFileResult>;
 /**
  * Create Report from docx template
  *
@@ -434,5 +480,14 @@ declare class IncompleteConditionalStatementError extends Error {
 declare class UnterminatedForLoopError extends Error {
     constructor(loop: LoopStatus);
 }
+/**
+ * Thrown when a disk-backed operation fails (spooling, XML writing, or zip
+ * output). Wraps the underlying fs/stream error so callers see a library error
+ * rather than a bare ENOSPC/EACCES.
+ */
+declare class ReportOutputError extends Error {
+    cause: unknown;
+    constructor(msg: string, cause: unknown);
+}
 
-export { CommandExecutionError, CommandSyntaxError, ImageError, IncompleteConditionalStatementError, InternalError, InvalidCommandError, NullishCommandResultError, ObjectCommandResultError, QueryResolver, TemplateParseError, UnterminatedForLoopError, createReport, createReport as default, getMetadata, isError, listCommands };
+export { CommandExecutionError, CommandSyntaxError, ImageError, IncompleteConditionalStatementError, InternalError, InvalidCommandError, NullishCommandResultError, ObjectCommandResultError, QueryResolver, ReportFileResult, ReportOutputError, TemplateParseError, UnterminatedForLoopError, createReport, createReport as default, getMetadata, isError, listCommands };

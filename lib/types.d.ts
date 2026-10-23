@@ -177,6 +177,22 @@ export type UserOptions = {
      * image-heavy reports, to protect a pattern templates can simply avoid.)
      */
     imageConcurrency?: number;
+    /**
+     * Write the report here instead of returning it in memory. Enables disk-backed mode.
+     */
+    outputPath?: string;
+    /**
+     * Root for the library's scratch files. Default: os.tmpdir()/docx-templates. Ignored without outputPath.
+     */
+    workDir?: string;
+};
+/**
+ * What `createReport` resolves to in disk-backed mode (when `outputPath` is
+ * given): the path written and its final size in bytes.
+ */
+export type ReportFileResult = {
+    path: string;
+    bytes: number;
 };
 export type CreateReportOptions = {
     cmdDelimiter: [string, string];
@@ -196,6 +212,8 @@ export type CreateReportOptions = {
     compressionLevel: number;
     allowNestedIf: boolean;
     imageConcurrency?: number;
+    outputPath?: string;
+    workDir?: string;
 };
 export type SandBox = {
     __code__: string | undefined;
@@ -221,6 +239,16 @@ export type Context = {
     };
     imageAndShapeIdIncrement: number;
     images: Images;
+    /** Scratch dir for disk-backed mode; undefined means keep image bytes in memory. */
+    runDir?: string;
+    /**
+     * Handle to the Node-only disk module, set only when disk-backed mode is
+     * enabled (Task 6). Kept as a `typeof import(...)` type (erased at compile
+     * time, no runtime import) rather than a static import, because this module
+     * (types.ts, via processTemplate.ts) is on the browser import chain and
+     * diskSinks.ts pulls in fs/path/crypto/os.
+     */
+    disk?: typeof import('./diskSinks');
     pendingLinkNode?: NonTextNode;
     linkId: number;
     links: Links;
@@ -260,8 +288,12 @@ export type PendingImageDownload = {
     drawingNode?: NonTextNode;
     captionParent?: Node;
 };
+export type SpooledImage = {
+    extension: ImageExtension;
+    file: string;
+};
 export type Images = {
-    [id: string]: Image;
+    [id: string]: Image | SpooledImage;
 };
 export declare const ImageExtensions: readonly [".png", ".gif", ".jpg", ".jpeg", ".svg"];
 type ImageExtension = (typeof ImageExtensions)[number];
