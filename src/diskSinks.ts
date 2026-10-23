@@ -117,9 +117,9 @@ export function xmlSpoolPath(runDir: string, name: string): string {
 /**
  * Remove a file, swallowing any failure.
  *
- * Used to drop a partial output file after a failed run: a truncated .docx is
- * worse than no file at all, and this runs on an error path, so it must never
- * mask the error that got us there.
+ * Used by zipSaveToFile to drop a partial output file after a failed write: a
+ * truncated .docx is worse than no file at all. It runs on an error path, so
+ * it must never mask the error that got us there.
  */
 export async function removeFile(file: string): Promise<void> {
   try {
@@ -250,6 +250,28 @@ export const zipSaveToFile = async (
   outputPath: string,
   compressionLevel: number
 ): Promise<number> => {
+  // The write stream is created -- and its open awaited -- explicitly rather
+  // than inlined into pipeline(), because whether the file was ever OPENED is
+  // what decides who owns it on failure:
+  //
+  //   open succeeded -> fs truncated whatever was at outputPath at open time,
+  //                     so the caller's previous report is already gone and a
+  //                     partial .docx is strictly worse than none: remove it.
+  //   open failed    -> we touched nothing (EISDIR, EACCES, ENOENT, ...). The
+  //                     caller owns outputPath; leave what is there alone.
+  //
+  // Awaiting 'open' before starting the pipeline is what makes that a decision
+  // rather than a race: a source error arriving while fs.open is still in
+  // flight would otherwise leave us unable to tell the two cases apart.
+  const ws = createWriteStream(outputPath);
+  try {
+    // 'open' is emitted asynchronously, so attaching here cannot miss it;
+    // events.once rejects instead if the stream errors.
+    await once(ws, 'open');
+  } catch (e) {
+    ws.destroy();
+    throw new ReportOutputError(`Could not open ${outputPath} for writing`, e);
+  }
   try {
     await pipeline(
       zip.generateNodeStream({
@@ -258,9 +280,10 @@ export const zipSaveToFile = async (
         compressionOptions: { level: compressionLevel },
         streamFiles: false,
       }),
-      createWriteStream(outputPath)
+      ws
     );
   } catch (e) {
+    await removeFile(outputPath);
     throw new ReportOutputError(
       `Could not write the report to ${outputPath}`,
       e

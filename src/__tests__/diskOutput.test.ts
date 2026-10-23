@@ -174,3 +174,46 @@ describe('disk-backed output', () => {
     await fs.promises.rm(dir, { recursive: true, force: true });
   });
 });
+
+// uid 0 bypasses the permission check that makes the read-only file below
+// unopenable, so under root this suite would not test what it claims to.
+const describeUnlessRoot =
+  process.getuid == null || process.getuid() !== 0 ? describe : describe.skip;
+
+describeUnlessRoot('disk-backed output, unopenable outputPath', () => {
+  // Regression guard for silent user-data loss: a failure to OPEN the output
+  // truncates nothing, so the caller's previous report must survive. A
+  // read-only file is the discriminating case -- unlinking it would succeed
+  // (POSIX checks the directory's permissions, not the file's). Skipped under
+  // uid 0, which bypasses the permission check.
+  it('does not delete an outputPath it could never open', async () => {
+    const template = await fs.promises.readFile(
+      path.join(FIXTURES, 'imageSimple.docx')
+    );
+    const dir = await mkOutDir();
+    const workDir = path.join(dir, 'work');
+    await fs.promises.mkdir(workDir);
+    const outputPath = path.join(dir, 'report.docx');
+    await fs.promises.writeFile(outputPath, 'the previous report');
+    await fs.promises.chmod(outputPath, 0o444);
+
+    await expect(
+      createReport({
+        template,
+        outputPath,
+        workDir,
+        data: {},
+        additionalJsContext: await injectImgContext(),
+      })
+    ).rejects.toThrow();
+
+    expect(fs.existsSync(outputPath)).toBe(true);
+    expect(await fs.promises.readFile(outputPath, 'utf-8')).toBe(
+      'the previous report'
+    );
+    // The scratch dir still goes, as on any other failure.
+    expect(await fs.promises.readdir(workDir)).toEqual([]);
+
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  });
+});

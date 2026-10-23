@@ -258,7 +258,8 @@ const { path, bytes } = await createReport({
 
 In this mode image bytes and document XML are spooled to a scratch directory
 and streamed into the zip, so peak memory no longer scales with the number of
-images. The bytes written are identical to what the in-memory path produces.
+images. The document content written is identical to what the in-memory path
+produces.
 
 **Ownership:** you own `outputPath` -- the library never deletes it after a
 successful run (on failure it removes the partial file, since a truncated

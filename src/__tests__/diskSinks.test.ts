@@ -370,3 +370,39 @@ describe('zip streaming helpers', () => {
     await fs.promises.rm(dir, { recursive: true, force: true });
   }, 60000);
 });
+
+// uid 0 bypasses the permission check that makes the read-only file below
+// unopenable, so under root this suite would not test what it claims to.
+const describeUnlessRoot =
+  process.getuid == null || process.getuid() !== 0 ? describe : describe.skip;
+
+describeUnlessRoot('zipSaveToFile when the output cannot be opened', () => {
+  // A read-only FILE at outputPath is the case that discriminates. fs fails at
+  // open (EACCES) having truncated nothing, yet unlinking still succeeds,
+  // because on POSIX removing a file depends on the DIRECTORY's permissions,
+  // not the file's -- so a blanket "remove the partial output" would delete
+  // the caller's previous report. A directory at outputPath does not test
+  // this: fsp.rm without `recursive` refuses to remove it anyway, so the
+  // assertion would hold even with the bug present.
+  //
+  // Skipped under uid 0, which bypasses the permission check entirely.
+  it('leaves outputPath alone when the write stream never opens', async () => {
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'zs-'));
+    const outputPath = path.join(dir, 'report.docx');
+    await fs.promises.writeFile(outputPath, 'the previous report');
+    await fs.promises.chmod(outputPath, 0o444);
+
+    const zip = new JSZip();
+    zip.file('inline.txt', 'plain content');
+
+    await expect(zipSaveToFile(zip, outputPath, 1)).rejects.toThrow(
+      /Could not open/
+    );
+    expect(fs.existsSync(outputPath)).toBe(true);
+    expect(await fs.promises.readFile(outputPath, 'utf-8')).toBe(
+      'the previous report'
+    );
+
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  });
+});

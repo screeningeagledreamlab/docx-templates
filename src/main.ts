@@ -406,20 +406,15 @@ async function createReport(
     logger.debug('Zipping...');
     if (diskMode && disk != null && createOptions.outputPath != null) {
       const outputPath = createOptions.outputPath;
-      try {
-        const bytes = await disk.zipSaveToFile(
-          zip,
-          outputPath,
-          createOptions.compressionLevel
-        );
-        return { path: outputPath, bytes };
-      } catch (e) {
-        // A truncated .docx is worse than no file, and we are the ones who
-        // created it. removeFile swallows its own errors so the original
-        // failure is what surfaces.
-        await disk.removeFile(outputPath);
-        throw e;
-      }
+      // Removing a partial output on failure is zipSaveToFile's job, not ours:
+      // it is the only code that knows whether the file was ever opened, and
+      // so whether there is anything of ours to remove.
+      const bytes = await disk.zipSaveToFile(
+        zip,
+        outputPath,
+        createOptions.compressionLevel
+      );
+      return { path: outputPath, bytes };
     }
     const output = await zipSave(zip, createOptions.compressionLevel);
     return output;
