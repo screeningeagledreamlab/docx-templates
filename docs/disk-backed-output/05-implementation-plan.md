@@ -312,6 +312,13 @@ const read = (s: NodeJS.ReadableStream): Promise<Buffer> =>
     s.on('data', c => chunks.push(Buffer.from(c)));
     s.on('end', () => resolve(Buffer.concat(chunks)));
     s.on('error', reject);
+    // Once a stream has been explicitly paused (as the "survives being paused"
+    // test below does, mirroring JSZip), Node pins its flowing flag to `false`;
+    // attaching a 'data' listener only auto-resumes when flowing is still unset
+    // (`null`). Real consumers either .pipe() (which resumes internally) or, like
+    // JSZip's pump loop, call resume() explicitly. Without this the paused test
+    // hangs forever.
+    s.resume();
   });
 
 describe('lazyFileStream', () => {
