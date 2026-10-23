@@ -48,5 +48,5 @@ export declare class UnterminatedForLoopError extends Error {
  */
 export declare class ReportOutputError extends Error {
     cause: unknown;
-    constructor(msg: string, cause: unknown);
+    constructor(msg: string, cause?: unknown);
 }
