@@ -106,6 +106,35 @@ describe('makeRunDir / cleanupRunDir', () => {
     await fs.promises.rm(root, { recursive: true, force: true });
   });
 
+  it('hands out unique dirs under concurrent calls on one root', async () => {
+    // The black-box concurrency test (two overlapping createReport calls)
+    // only discriminates probabilistically: a collision needs both runs to
+    // draw the same id AND to interleave. This hits makeRunDir directly, 50
+    // calls deep against a single root, so a collision or a mkdir that
+    // clobbered a sibling shows up deterministically.
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'runconc-'));
+    const N = 50;
+    const pending: Promise<string>[] = [];
+    for (let i = 0; i < N; i++) pending.push(makeRunDir(root));
+    const dirs = await Promise.all(pending);
+
+    const unique: Record<string, true> = {};
+    for (let i = 0; i < dirs.length; i++) unique[dirs[i]] = true;
+    expect(Object.keys(unique).length).toBe(N);
+
+    // Every one must also really exist, fully built: a collision that
+    // happened to be swallowed by `recursive: true` would still show up as a
+    // shared path above, but this pins the subdirs too.
+    for (let i = 0; i < dirs.length; i++) {
+      expect(fs.existsSync(path.join(dirs[i], 'media'))).toBe(true);
+      expect(fs.existsSync(path.join(dirs[i], 'xml'))).toBe(true);
+    }
+
+    await Promise.all(dirs.map(d => cleanupRunDir(d)));
+    expect(await fs.promises.readdir(root)).toEqual([]);
+    await fs.promises.rm(root, { recursive: true, force: true });
+  });
+
   it('cleanupRunDir never throws, even on a missing path', async () => {
     await expect(
       cleanupRunDir(path.join(os.tmpdir(), 'definitely-not-here-xyz'))

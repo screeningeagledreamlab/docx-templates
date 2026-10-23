@@ -1,12 +1,21 @@
 /**
  * Generates a report whose images total roughly `mbPerImage * <images served>`,
- * under whatever heap ceiling the parent imposed via --max-old-space-size.
+ * under whatever VIRTUAL-MEMORY ceiling the parent imposed via `ulimit -v`.
+ *
+ * Not `--max-old-space-size`. That flag bounds only V8's JS heap, and the
+ * memory this script is built to stress is not on it: image bytes live in
+ * `Buffer`/`ArrayBuffer`, whose backing stores come from the embedder's
+ * ArrayBuffer allocator (plain malloc), entirely outside the old space.
+ * Empirically, 500MB per image x 5 images under `--max-old-space-size=16`
+ * still completed in the in-memory mode -- the flag never engages, so it
+ * cannot discriminate the two modes at any setting. `ulimit -v` bounds the
+ * whole address space and does. See the header of diskOutput.perf.test.ts.
  *
  * This file is compiled with `tsc` and executed directly with `node` by
  * `diskOutput.perf.test.ts` -- it is never imported from TypeScript, so it
  * carries no exports (see .eslintrc's import/no-unused-modules).
  *
- * Usage: node --max-old-space-size=N generateManyImages.js <mode> <mbPerImage> [outPath]
+ * Usage: ( ulimit -v N; node generateManyImages.js <mode> <mbPerImage> [outPath] )
  *   mode: 'memory' | 'disk'
  */
 import path from 'path';

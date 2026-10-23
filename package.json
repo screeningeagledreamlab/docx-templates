@@ -4,6 +4,9 @@
   "description": "Template-based docx report creation (fork of guigrpa/docx-templates)",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
+  "browser": {
+    "./lib/diskSinks.js": "./lib/diskSinks.browser.js"
+  },
   "author": "Screening Eagle",
   "contributors": [
     {

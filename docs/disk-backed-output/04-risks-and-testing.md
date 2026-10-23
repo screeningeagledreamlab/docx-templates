@@ -71,21 +71,33 @@ try {
   runDir = await makeRunDir(workDir)
   ...three sinks...
 } finally {
-  destroy any lazy streams JSZip never consumed
   await cleanupRunDir(runDir)
 }
 ```
 
-Three rules:
+Two rules:
 
 - **Cleanup never masks the original error.** The `finally` body is itself
   wrapped; failures inside it go to `logger.debug` and are swallowed. A failed
   `rm` must not replace a `TemplateParseError`.
 - **Partial output is removed on failure.** A truncated `.docx` is worse than no
-  file, and we created it.
-- **Unconsumed lazy streams are destroyed.** On a mid-generation failure JSZip
-  holds an open fd for the entry it was on, with more queued. Without this, every
-  failed run leaks fds - which compounds in a long-lived process.
+  file, and we created it. This is `zipSaveToFile`'s job, not the `finally`'s:
+  only it knows whether the output file was ever opened.
+
+**Resolved during implementation - the `finally` does NOT destroy unconsumed
+lazy streams.** This draft originally required a third rule ("on a mid-generation
+failure JSZip holds an open fd for the entry it was on, with more queued"). That
+turned out to be unreachable with the implementation we shipped, and the code
+deliberately omits it (see the comment on the `finally` in `main.ts`):
+
+- `streamFiles: false` makes JSZip drain and close each entry's source
+  completely before it starts the next, so at most one source stream is ever
+  live, and it is already closed by the time a later entry fails.
+- A `lazyFileStream` that was never resumed has not opened its fd at all - the
+  deferred open is the whole point of Risk 1's mitigation - so a queue of
+  unconsumed streams holds no descriptors by construction.
+
+Verified empirically: 40 entries, an error injected mid-archive, 0 fds leaked.
 
 Existing template errors (`main.ts:227`, `:265`) fire before any sink exists and
 are already covered by the `finally`.
@@ -123,12 +135,31 @@ regression guard for Risk 1.
 
 ### 4. Peak memory (answers the originating Q3)
 
-Run generation in a child process with `--max-old-space-size` set to a ceiling
-the in-memory mode provably cannot fit under, and assert the disk-backed mode
-completes.
+Run generation in a child process under a memory ceiling the in-memory mode
+provably cannot fit under, and assert the disk-backed mode completes.
 
 A pass/fail on "fits in X MB" is far more durable than asserting a `heapUsed`
 number, which drifts across Node versions and GC timing.
+
+**Measure RSS, not heap.** This draft specified `--max-old-space-size` for the
+ceiling. That does not work here, and the finding generalises to anyone
+benchmarking this feature: the memory this change is about is **off the V8
+heap**. Image bytes live in `Buffer`/`ArrayBuffer`, whose backing stores are
+allocated by the embedder's ArrayBuffer allocator (plain malloc), outside the
+old space that `--max-old-space-size` bounds. Empirically, 500MB per image x 5
+images under `--max-old-space-size=16` still completed in the in-memory mode:
+the flag never engages, so it cannot discriminate the two modes at any setting.
+
+Consequences:
+
+- The shipped guard constrains the process's virtual address space with
+  `ulimit -v` instead (see `diskOutput.perf.test.ts`). Its ceiling is
+  architecture-sensitive - tuned on Linux/aarch64, and to be re-verified on x64
+  before the suite is wired into CI, which is why `testPerf` is a separate
+  script rather than part of `yarn test`.
+- Any before/after measurement of this feature (including the acceptance gate
+  below) must watch **peak RSS**, not `process.memoryUsage().heapUsed`. Heap
+  numbers will show almost none of the improvement this change delivers.
 
 ### 5. Generation time (answers the originating Q4)
 

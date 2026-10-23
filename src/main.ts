@@ -419,6 +419,16 @@ async function createReport(
     const output = await zipSave(zip, createOptions.compressionLevel);
     return output;
   } finally {
+    // Cleaning up the run dir is ALL this finally does, deliberately: it does
+    // not also destroy the lazy image streams JSZip never consumed.
+    // 04-risks-and-testing.md originally called for that, but it is dead code
+    // here. With `streamFiles: false`, JSZip drains and closes each entry's
+    // source completely before moving to the next, and a lazyFileStream that
+    // was never resumed has not opened its fd at all (that is the whole point
+    // of the deferred open in diskSinks.ts). So on a mid-generation failure
+    // there is at most the one already-closed stream and a queue of streams
+    // holding no fds. Verified empirically: 40 entries, an error injected
+    // mid-archive, 0 fds leaked. Please do not "fix" this back.
     if (disk != null) await disk.cleanupRunDir(runDir);
   }
 }

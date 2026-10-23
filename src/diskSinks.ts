@@ -103,8 +103,7 @@ export function assertOutputDirExists(outputPath: string): void {
   const dir = path.dirname(outputPath);
   if (!existsSync(dir)) {
     throw new ReportOutputError(
-      `The output directory ${dir} does not exist. Create it before calling createReport.`,
-      undefined
+      `The output directory ${dir} does not exist. Create it before calling createReport.`
     );
   }
 }
@@ -282,6 +281,11 @@ export const zipSaveToFile = async (
       }),
       ws
     );
+    // Inside the try on purpose: a stat failure here (the file vanished, the
+    // mount went away) is just as much a write failure as a pipeline error,
+    // and must surface as a ReportOutputError like every other failure path
+    // in this module rather than as a bare ENOENT.
+    return (await stat(outputPath)).size;
   } catch (e) {
     await removeFile(outputPath);
     throw new ReportOutputError(
@@ -289,5 +293,4 @@ export const zipSaveToFile = async (
       e
     );
   }
-  return (await stat(outputPath)).size;
 };

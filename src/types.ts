@@ -196,6 +196,24 @@ export type UserOptions = {
   imageConcurrency?: number;
   /**
    * Write the report here instead of returning it in memory. Enables disk-backed mode.
+   *
+   * WARNING -- set this at the CALL SITE, not conditionally inside the options
+   * object. `createReport` picks its return type by overload resolution on the
+   * shape of the argument, and a property that is merely *present* with type
+   * `string | undefined` does not select the `ReportFileResult` overload:
+   *
+   * ```ts
+   * // WRONG: statically Promise<Uint8Array>, but at runtime a
+   * // ReportFileResult whenever `cond` is true.
+   * createReport({ template, data, outputPath: cond ? '/x/y.docx' : undefined });
+   *
+   * // RIGHT: branch outside the options object, so each call site has one
+   * // unambiguous return type.
+   * const common = { template, data };
+   * const result = cond
+   *   ? await createReport({ ...common, outputPath: '/x/y.docx' }) // ReportFileResult
+   *   : await createReport(common);                                // Uint8Array
+   * ```
    */
   outputPath?: string;
   /**

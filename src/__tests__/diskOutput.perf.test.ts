@@ -27,6 +27,17 @@ const HELPER_RELATIVE = path.join('__tests__', 'helpers', 'generateManyImages');
 // mode spools each one to disk as it is produced, so only ~one image's worth
 // of buffer is ever resident at a time. Scaling image size exploits exactly
 // that gap.
+//
+// ARCHITECTURE-SENSITIVE CONSTANT. `ulimit -v` caps the whole virtual address
+// space, which includes V8's baseline reservation (code ranges, cage/pointer
+// compression reservation, thread stacks) before a single byte of ours is
+// allocated. That baseline varies by CPU architecture and by Node version, so
+// a ceiling that separates the two modes on one machine can be either
+// unreachable or trivially satisfiable on another. This value was tuned on
+// Linux/aarch64. It MUST be re-verified on x64 Linux -- both that the
+// disk-backed run passes and that the in-memory run still fails for a genuine
+// allocation reason -- before this suite is ever wired into CI. That is why
+// `testPerf` is a separate script and not part of `yarn test`.
 const VM_CEILING_KB = 2_000_000; // ~1.9 GiB of virtual address space
 const MB_PER_IMAGE_CEILING = 300; // fixture renders 5 images => ~1.5GB if all resident at once
 
@@ -207,7 +218,10 @@ describe('disk-backed memory and time guards', () => {
     const diskResult = JSON.parse(run('disk', MB_PER_IMAGE_TIMING, out));
 
     expect(memResult.images).toBeGreaterThan(0);
-    expect(diskResult.images).toBeGreaterThan(0);
+    // The two modes must have done the SAME work, not merely some work: a
+    // disk-mode regression that served fewer images would finish faster and
+    // make this test greener, which is exactly backwards.
+    expect(diskResult.images).toBe(memResult.images);
     expect(diskResult.ms).toBeLessThanOrEqual(memResult.ms * 1.25);
 
     fs.rmSync(dir, { recursive: true, force: true });

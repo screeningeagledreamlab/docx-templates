@@ -53,6 +53,10 @@ const expectEquivalent = async (
 
   expect(Object.keys(b).sort()).toEqual(Object.keys(a).sort());
   const names = Object.keys(a);
+  // Two empty entry lists compare equal, which would make this assertion -
+  // shared by every equivalence test in this file - pass while verifying
+  // nothing. Any real docx has well over five parts.
+  expect(names.length).toBeGreaterThan(5);
   for (let i = 0; i < names.length; i++) {
     const name = names[i];
     // Compare with a helpful message: a bare Buffer diff is unreadable.
@@ -486,6 +490,18 @@ describe('equivalence: disk-backed output matches in-memory output', () => {
           ],
         },
       }),
+    },
+    {
+      // htmls.docx carries two HTML commands, each of which adds an altChunk
+      // part plus its relationship and [Content_Types] override. That is the
+      // one remaining output path (alongside images and secondary XML) that
+      // appends entries to the zip after the main document is built, so it
+      // needs its own equivalence case - the HTML bytes are added from memory
+      // in both modes, and this proves the disk-backed zip assembly does not
+      // drop or reorder them.
+      name: 'HTML (altChunk) entries',
+      fixture: 'htmls.docx',
+      options: async () => ({ data: {} }),
     },
   ];
 

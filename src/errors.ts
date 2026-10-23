@@ -97,8 +97,12 @@ export class UnterminatedForLoopError extends Error {
  */
 export class ReportOutputError extends Error {
   cause: unknown;
-  constructor(msg: string, cause: unknown) {
-    super(msg);
+  constructor(msg: string, cause?: unknown) {
+    // Fold the underlying error into `.message`, the way
+    // CommandExecutionError does. Setting only `.cause` is not enough: a
+    // caller logging `err.message` would see "Could not write the report to
+    // /x/y.docx" with no hint that the real problem was ENOSPC or EACCES.
+    super(isError(cause) ? `${msg}: ${cause.name}: ${cause.message}` : msg);
     Object.setPrototypeOf(this, ReportOutputError.prototype);
     this.cause = cause;
   }

@@ -17,3 +17,9 @@ jobs:
           node-version: "20.x"
       - run: yarn install --frozen-lockfile
       - run: yarn test
+      # Arms the guards that only run at build time: checkBrowserBundle
+      # (no Node builtins in the browser bundle) and the committed lib/
+      # matching src/. lib/ is tracked, so its freshness is a
+      # correctness property and needs enforcement.
+      - run: yarn compile
+      - run: git diff --exit-code lib/
