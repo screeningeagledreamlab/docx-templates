@@ -1133,12 +1133,17 @@ const processEndForIf = (
   }
 };
 
-const imageToContext = async (ctx: Context, img: Image) => {
-  validateImage(img);
+/**
+ * Allocate the next image relId and register an already-resolved image under
+ * it. Resolution (validation, and spooling in disk-backed mode) happens in
+ * resolveImage; this runs in document order, so ids stay deterministic even
+ * when the images were resolved concurrently.
+ */
+const addImageToContext = (ctx: Context, img: Image | SpooledImage) => {
   ctx.imageAndShapeIdIncrement += 1;
   const id = String(ctx.imageAndShapeIdIncrement);
   const relId = `img${id}`;
-  ctx.images[relId] = await storeImageViaCtx(ctx, relId, img);
+  ctx.images[relId] = img;
   return relId;
 };
 
@@ -1276,17 +1281,73 @@ const buildPendingImageNode = (
 };
 
 /**
+ * `ImagePars` with every image payload removed -- both the image itself and
+ * the SVG thumbnail live in `ResolvedImage`.
+ */
+type ImageLayout = Omit<ImagePars, 'data' | 'thumbnail'>;
+
+/**
+ * An IMAGE result whose bytes have already been dealt with: spooled to the run
+ * dir in disk-backed mode, still in memory otherwise.
+ */
+type ResolvedImage = {
+  layout: ImageLayout;
+  main: Image | SpooledImage;
+  /** Raster fallback, present only for SVGs. */
+  thumbnail?: Image | SpooledImage;
+};
+
+/**
+ * Validate an IMAGE result and get its bytes out of memory, returning
+ * everything the XML side still needs.
+ *
+ * Split out of applyImageData so the parallel path can run it INSIDE its
+ * p-limit task. Spooling after every evaluation has settled would leave every
+ * payload simultaneously resident first, which is exactly the image-count
+ * memory axis disk-backed mode exists to remove (see
+ * docs/disk-backed-output/01-problem.md); p-limit then bounds the live
+ * payloads at `imageConcurrency` instead.
+ */
+const resolveImage = async (
+  ctx: Context,
+  relId: string,
+  imagePars: ImagePars
+): Promise<ResolvedImage> => {
+  validateImagePars(imagePars);
+  // `data` and `thumbnail` are deliberately destructured out and never put
+  // back: holding either on `layout` would defeat the whole point of spooling
+  // here.
+  const { data, thumbnail, ...layout } = imagePars;
+  const main = await storeImageViaCtx(ctx, relId, getImageData(imagePars));
+  if (main.extension !== '.svg') return { layout, main };
+
+  // An SVG needs a raster fallback for consumers that cannot render it (older
+  // Word, Explorer previews). It is a second full payload, so it is spooled
+  // here alongside the SVG rather than when its relId is allocated.
+  const thumb: Image = thumbnail ?? { data: 'bm90aGluZwo=', extension: '.png' };
+  validateImage(thumb);
+  // Its own relId is not assigned until the ordered pass over the results, so
+  // the spool file is named after the SVG's. The name only picks the file on
+  // disk -- the zip entry is named from the ctx.images key.
+  return {
+    layout,
+    main,
+    thumbnail: await storeImageViaCtx(ctx, `${relId}-thumb`, thumb),
+  };
+};
+
+/**
  * Apply resolved image data to a pending image's placeholder XML nodes.
  * Shared by both inline (processImage) and parallel (resolvePendingImages) paths.
  */
 const applyImageData = async (
   ctx: Context,
-  imagePars: ImagePars,
+  resolved: ResolvedImage,
   pending: PendingImageDownload
 ) => {
-  validateImagePars(imagePars);
-  const cx = (imagePars.width * 360e3).toFixed(0);
-  const cy = (imagePars.height * 360e3).toFixed(0);
+  const { layout, main } = resolved;
+  const cx = (layout.width * 360e3).toFixed(0);
+  const cy = (layout.height * 360e3).toFixed(0);
 
   // Update dimensions
   if (pending.extentNode) {
@@ -1299,13 +1360,13 @@ const applyImageData = async (
   }
 
   // Handle rotation
-  if (imagePars.rotation && pending.xfrmNode) {
-    const rot = (imagePars.rotation * 60e3).toString();
+  if (layout.rotation && pending.xfrmNode) {
+    const rot = (layout.rotation * 60e3).toString();
     pending.xfrmNode._attrs.rot = rot;
   }
 
   // Handle alt text
-  const alt = imagePars.alt || '';
+  const alt = layout.alt || '';
   if (pending.docPrNode) {
     pending.docPrNode._attrs.descr = alt;
   }
@@ -1313,22 +1374,14 @@ const applyImageData = async (
     pending.cNvPrNode._attrs.descr = alt;
   }
 
-  // Store image data
-  const imgData = getImageData(imagePars);
-  validateImage(imgData);
-
-  // Handle SVG images - need to add thumbnail
-  if (imgData.extension === '.svg') {
-    const thumbnail: Image = imagePars.thumbnail ?? {
-      data: 'bm90aGluZwo=',
-      extension: '.png',
-    };
-
+  // Handle SVG images - a thumbnail is present exactly when the image is an
+  // SVG, and was resolved alongside it (see resolveImage).
+  if (resolved.thumbnail != null) {
     // Store the SVG with its original ID
-    ctx.images[pending.id] = await storeImageViaCtx(ctx, pending.id, imgData);
+    ctx.images[pending.id] = main;
 
     // Create a new ID for the thumbnail
-    const thumbRelId = await imageToContext(ctx, thumbnail);
+    const thumbRelId = addImageToContext(ctx, resolved.thumbnail);
 
     // Add SVG extension to extLst
     if (pending.extLstNode) {
@@ -1353,7 +1406,7 @@ const applyImageData = async (
     }
   } else {
     // Non-SVG image - just store the data
-    ctx.images[pending.id] = await storeImageViaCtx(ctx, pending.id, imgData);
+    ctx.images[pending.id] = main;
   }
 };
 
@@ -1404,8 +1457,9 @@ export async function resolvePendingImages(
         // failed result (always earlier in document order) before reaching them,
         // so the whole report is discarded and their placeholders never ship.
         if (abortQueued) return undefined;
+        let imagePars: ImagePars | undefined;
         try {
-          return await runUserJsAndGetRaw(
+          imagePars = await runUserJsAndGetRaw(
             undefined,
             pd.code,
             ctx,
@@ -1415,6 +1469,25 @@ export async function resolvePendingImages(
         } catch (e) {
           if (failFastEager) abortQueued = true;
           throw e;
+        }
+        // A nullish result means "no image here"; the loop below removes the
+        // orphaned placeholder.
+        if (imagePars == null) return undefined;
+        try {
+          // Resolving the bytes HERE, inside the limit, is what keeps peak
+          // image memory at `concurrency x avg` rather than `count x avg`:
+          // returning the raw ImagePars instead would keep every payload
+          // reachable until the loop below got to it. See resolveImage.
+          return await resolveImage(ctx, pd.id, imagePars);
+        } catch (e) {
+          if (failFastEager) abortQueued = true;
+          // Image DATA failures are wrapped here rather than at the use site,
+          // because from this point they travel as rejections alongside
+          // evaluation failures -- and the handler below deliberately does not
+          // re-wrap those. Without this, a bad image would surface as a bare
+          // validation Error in parallel mode and as an ImageError inline.
+          if (!isError(e)) throw e;
+          throw new ImageError(e, pd.cmd);
         }
       })
     )
@@ -1452,20 +1525,20 @@ export async function resolvePendingImages(
       continue;
     }
 
-    const imagePars = result.value;
-    if (imagePars == null) {
+    const resolved = result.value;
+    if (resolved == null) {
       // Expression returned null — no image to insert; remove placeholder
       removeDrawingNode(pending);
       continue;
     }
 
     try {
-      await applyImageData(ctx, imagePars, pending);
+      await applyImageData(ctx, resolved, pending);
 
       // Handle caption if provided (parallel mode stores captionParent reference)
-      if (imagePars.caption && pending.captionParent) {
+      if (resolved.layout.caption && pending.captionParent) {
         const captionBr = newNonTextNode('w:br', {});
-        const captionText = newTextNode(imagePars.caption);
+        const captionText = newTextNode(resolved.layout.caption);
         const captionT = newNonTextNode('w:t', {}, [captionText]);
 
         captionBr._parent = pending.captionParent;
@@ -1522,7 +1595,11 @@ const processImage = async (ctx: Context, imagePars: ImagePars) => {
 
   // Apply resolved data immediately (dimensions, alt text, rotation, SVG handling, storage)
   try {
-    await applyImageData(ctx, imagePars, pending);
+    await applyImageData(
+      ctx,
+      await resolveImage(ctx, relId, imagePars),
+      pending
+    );
   } catch (e) {
     // Validation failed after the placeholder was published. Discard it, otherwise
     // the walk splices in an orphaned zero-dimension <w:drawing> whose r:embed

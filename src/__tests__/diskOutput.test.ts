@@ -528,3 +528,146 @@ describe('equivalence: disk-backed output matches in-memory output', () => {
     }, 20000);
   });
 });
+
+describe('disk-backed parallel image spooling', () => {
+  /**
+   * Count the image files spooled so far across every run dir under `workDir`.
+   * The run dir name is random, so we walk one level down rather than
+   * guessing it.
+   */
+  const countSpooled = async (workDir: string): Promise<number> => {
+    const runs = await fs.promises.readdir(workDir);
+    let n = 0;
+    for (let i = 0; i < runs.length; i++) {
+      const media = path.join(workDir, runs[i], 'media');
+      try {
+        n += (await fs.promises.readdir(media)).length;
+      } catch (e) {
+        // Run dir not fully created yet, or already cleaned up.
+      }
+    }
+    return n;
+  };
+
+  /**
+   * The point of disk-backed mode is that image bytes stop scaling with image
+   * COUNT. In parallel mode that only holds if each image is spooled inside
+   * its own concurrency-limited task: if spooling happens after every
+   * evaluation has settled, every payload is simultaneously resident first,
+   * and the image-count axis is back -- just moved earlier in the pipeline,
+   * before the zip rather than during it.
+   *
+   * p-limit starts a queued task only once a running one has fully settled.
+   * So if spooling is part of the task, then by the time call `k` (0-based)
+   * begins, at least `k - concurrency + 1` earlier images must already be on
+   * disk. Observing the media dir from inside getImage tests exactly that,
+   * deterministically and without measuring memory.
+   */
+  it('spools each image inside the concurrency limit, not after all are resolved', async () => {
+    const template = await fs.promises.readFile(
+      path.join(FIXTURES, 'loop_var_identity_image_template.docx')
+    );
+    const data = await fs.promises.readFile(path.join(FIXTURES, 'sample.png'));
+    const workDir = await fs.promises.mkdtemp(
+      path.join(os.tmpdir(), 'docx-work-')
+    );
+    const outDir = await mkOutDir();
+    const outputPath = path.join(outDir, 'report.docx');
+
+    const CONCURRENCY = 2;
+    const ROWS = [0, 1, 2, 3, 4, 5];
+    const spooledAtCall: number[] = [];
+
+    await createReport({
+      template,
+      outputPath,
+      workDir,
+      imageConcurrency: CONCURRENCY,
+      cmdDelimiter: ['{{', '}}'] as [string, string],
+      data: { rows: ROWS },
+      additionalJsContext: {
+        getImage: async () => {
+          spooledAtCall.push(await countSpooled(workDir));
+          return { width: 6, height: 6, data, extension: '.png' as const };
+        },
+      },
+    });
+
+    expect(spooledAtCall).toHaveLength(ROWS.length);
+
+    const observed = spooledAtCall.map((spooled, call) => ({
+      call,
+      atLeast: Math.max(0, call - CONCURRENCY + 1),
+      spooled,
+    }));
+    // Guards the guard: with ROWS.length <= CONCURRENCY every bound would be
+    // 0 and the assertion below would hold vacuously.
+    expect(observed[observed.length - 1].atLeast).toBeGreaterThan(0);
+    expect(observed.filter(o => o.spooled < o.atLeast)).toEqual([]);
+
+    await fs.promises.rm(outDir, { recursive: true, force: true });
+    await fs.promises.rm(workDir, { recursive: true, force: true });
+  }, 20000);
+
+  /**
+   * An SVG contributes TWO payloads -- the vector itself and the raster
+   * fallback thumbnail, which is a full user-supplied image, not a token. Both
+   * have to leave memory inside the task, or SVG-heavy reports keep the
+   * image-count memory axis the non-SVG path just lost.
+   */
+  it('spools SVG thumbnails inside the concurrency limit too', async () => {
+    const template = await fs.promises.readFile(
+      path.join(FIXTURES, 'loop_var_identity_image_template.docx')
+    );
+    const svgData = await fs.promises.readFile(
+      path.join(FIXTURES, 'sample.svg')
+    );
+    const thumbData = await fs.promises.readFile(
+      path.join(FIXTURES, 'sample.png')
+    );
+    const workDir = await fs.promises.mkdtemp(
+      path.join(os.tmpdir(), 'docx-work-')
+    );
+    const outDir = await mkOutDir();
+    const outputPath = path.join(outDir, 'report.docx');
+
+    const CONCURRENCY = 2;
+    const FILES_PER_IMAGE = 2; // the SVG plus its thumbnail
+    const ROWS = [0, 1, 2, 3];
+    const spooledAtCall: number[] = [];
+
+    await createReport({
+      template,
+      outputPath,
+      workDir,
+      imageConcurrency: CONCURRENCY,
+      cmdDelimiter: ['{{', '}}'] as [string, string],
+      data: { rows: ROWS },
+      additionalJsContext: {
+        getImage: async () => {
+          spooledAtCall.push(await countSpooled(workDir));
+          return {
+            width: 6,
+            height: 6,
+            data: svgData,
+            extension: '.svg' as const,
+            thumbnail: { data: thumbData, extension: '.png' as const },
+          };
+        },
+      },
+    });
+
+    expect(spooledAtCall).toHaveLength(ROWS.length);
+
+    const observed = spooledAtCall.map((spooled, call) => ({
+      call,
+      atLeast: Math.max(0, call - CONCURRENCY + 1) * FILES_PER_IMAGE,
+      spooled,
+    }));
+    expect(observed[observed.length - 1].atLeast).toBeGreaterThan(0);
+    expect(observed.filter(o => o.spooled < o.atLeast)).toEqual([]);
+
+    await fs.promises.rm(outDir, { recursive: true, force: true });
+    await fs.promises.rm(workDir, { recursive: true, force: true });
+  }, 20000);
+});
