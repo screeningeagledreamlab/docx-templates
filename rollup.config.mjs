@@ -4,32 +4,23 @@ import node from '@rollup/plugin-node-resolve'
 import commonjs from '@rollup/plugin-commonjs'
 import dts from 'rollup-plugin-dts'
 import { defineConfig } from 'rollup'
+import { fileURLToPath } from 'url'
+import path from 'path'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // src/main.ts reaches ./diskSinks through a dynamic import, taken only when the
 // Node-only `outputPath` option is set. diskSinks.ts imports fs/path/crypto/os,
-// which have no browser equivalent, so the browser build swaps in a stub that
-// throws if that code path is ever reached. Without this the bundle pulls in
-// those Node builtins (unresolved) and the dynamic import also forces rollup to
-// emit a second chunk, which `output.file` cannot express.
-const DISK_SINKS_STUB = '\0docx-templates:disk-sinks-stub'
-
-const DISK_SINKS_STUB_SOURCE = `
-const unsupported = () => {
-  throw new Error(
-    'docx-templates: disk-backed output (the outputPath option) requires Node.js and is not available in the browser build.'
-  )
-}
-export const lazyFileStream = unsupported
-export const makeRunDir = unsupported
-export const cleanupRunDir = unsupported
-export const writeXml = unsupported
-export const storeImage = unsupported
-export const zipSetStream = unsupported
-export const zipSaveToFile = unsupported
-export const assertOutputDirExists = unsupported
-export const xmlSpoolPath = unsupported
-export const removeFile = unsupported
-`
+// which have no browser equivalent, so the browser build swaps in
+// src/diskSinks.browser.ts -- a real, type-checked stub whose exports all throw
+// -- if that code path is ever reached. Without this the bundle pulls in those
+// Node builtins (unresolved) and the dynamic import also forces rollup to emit
+// a second chunk, which `output.file` cannot express.
+//
+// The substitute is a real TS file (rather than a hand-maintained template
+// string) with a compile-time shape guard against diskSinks.ts, so an export
+// added to one without the other fails `tsc`, not just the browser bundle.
+const DISK_SINKS_BROWSER_STUB = path.resolve(__dirname, 'src/diskSinks.browser.ts')
 
 export default defineConfig([{
   input: './src/browser.ts',
@@ -49,12 +40,7 @@ export default defineConfig([{
       name: 'disk-sinks-browser-stub',
       resolveId(id) {
         if (id === './diskSinks') {
-          return DISK_SINKS_STUB
-        }
-      },
-      load(id) {
-        if (id === DISK_SINKS_STUB) {
-          return DISK_SINKS_STUB_SOURCE
+          return DISK_SINKS_BROWSER_STUB
         }
       }
     },
@@ -105,8 +91,19 @@ export default defineConfig([{
       }
     }
   ],
-  external: [
+  external: (id) =>
     // To prevent warning. If `import ... from 'stream'` exists in bundled.d.ts this build has to be changed to remove it.
-    'stream'
-  ]
+    id === 'stream' ||
+    // Context.disk (types.ts) is typed as `typeof import('./diskSinks')`, a
+    // type-only reference that is erased at runtime and not part of the
+    // public API (Context itself is internal, and no exported symbol's type
+    // depends on it). But rollup-plugin-dts still resolves it as a real
+    // module edge, creating a types.d.ts <-> diskSinks.d.ts cycle that trips
+    // a CJS-interop bug in this version of the plugin when it tries to inline
+    // diskSinks.d.ts's own `import JSZip from 'jszip'`
+    // (RollupError: "Invalid value false for option output.interop").
+    // diskSinks.d.ts is never part of the public type surface, so excluding
+    // it from the bundle entirely sidesteps the bug without changing what
+    // bundled.d.ts declares.
+    /diskSinks(\.browser)?\.d\.ts$/.test(id)
 }])

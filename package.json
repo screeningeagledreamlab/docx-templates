@@ -30,7 +30,8 @@
   },
   "scripts": {
     "compile": "rimraf ./lib && tsc && yarn rollup",
-    "rollup": "rollup -c",
+    "rollup": "rollup -c && yarn checkBrowserBundle",
+    "checkBrowserBundle": "node scripts/checkBrowserBundle.js",
     "jest": "jest --watch --coverage",
     "test": "yarn lint && yarn testCovFull",
     "testCovFull": "yarn testCovPrepare && yarn testDev && yarn testCovReport",
