@@ -39,7 +39,8 @@
     "testDev": "NODE_ENV=development jest --coverage && mv .nyc_output/coverage-final.json .nyc_tmp/coverage-dev.json && rm -rf .nyc_output",
     "testCovReport": "cp -r .nyc_tmp .nyc_output && nyc report --reporter=html --reporter=lcov --reporter=text",
     "lint": "eslint \"src/**/*.{js,jsx,ts,tsx}\"",
-    "lint-fix": "eslint --fix \"src/**/*.{js,jsx,ts,tsx}\""
+    "lint-fix": "eslint --fix \"src/**/*.{js,jsx,ts,tsx}\"",
+    "testPerf": "jest --no-coverage --testRegex 'src/.*__tests__/.*\\.perf\\.test\\.ts$'"
   },
   "engines": {
     "node": ">=16"
@@ -90,7 +91,7 @@
       "^.+\\.tsx?$": "ts-jest"
     },
     "testTimeout": 10000,
-    "testRegex": "src/.*__tests__/.*\\.(test|spec)\\.(ts|tsx)$",
+    "testRegex": "src/.*__tests__/.*(?<!\\.perf)\\.(test|spec)\\.(ts|tsx)$",
     "coverageDirectory": ".nyc_output",
     "coverageReporters": [
       "json",
