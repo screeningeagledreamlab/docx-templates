@@ -10,6 +10,7 @@ import {
   writeXml,
   storeImage,
   zipSetStream,
+  zipSaveToFile,
 } from '../diskSinks';
 import { buildXml, parseXml } from '../xml';
 import { Image, SpooledImage } from '../types';
@@ -255,4 +256,70 @@ describe('zipSetStream', () => {
 
     await fs.promises.rm(dir, { recursive: true, force: true });
   });
+});
+
+describe('zip streaming helpers', () => {
+  it('writes a zip to disk with stream entries intact', async () => {
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'zs-'));
+    const src = path.join(dir, 'payload.bin');
+    const payload = Buffer.from('café 漢字 payload', 'utf-8');
+    await fs.promises.writeFile(src, payload);
+
+    const zip = new JSZip();
+    zip.file('inline.txt', 'plain content');
+    zipSetStream(zip, 'streamed.bin', src);
+
+    const out = path.join(dir, 'out.zip');
+    const bytes = await zipSaveToFile(zip, out, 1);
+
+    expect(bytes).toBeGreaterThan(0);
+    expect((await fs.promises.stat(out)).size).toBe(bytes);
+
+    const reloaded = await JSZip.loadAsync(await fs.promises.readFile(out));
+    expect(await reloaded.file('inline.txt')!.async('text')).toBe(
+      'plain content'
+    );
+    const roundTripped = await reloaded
+      .file('streamed.bin')!
+      .async('nodebuffer');
+    expect(roundTripped.equals(payload)).toBe(true);
+
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  });
+
+  it('does not emit data descriptors (GP bit 3 must be clear)', async () => {
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'zs-'));
+    const src = path.join(dir, 'p.bin');
+    await fs.promises.writeFile(src, Buffer.alloc(5000, 3));
+
+    const zip = new JSZip();
+    zipSetStream(zip, 'p.bin', src);
+    const out = path.join(dir, 'out.zip');
+    await zipSaveToFile(zip, out, 1);
+
+    const buf = await fs.promises.readFile(out);
+    // Local file header: signature PK\x03\x04, then version(2), then flags(2).
+    expect(buf.readUInt32LE(0)).toBe(0x04034b50);
+    const flags = buf.readUInt16LE(6);
+    expect(flags & 0x08).toBe(0);
+
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  });
+
+  it('handles many stream entries without exhausting file descriptors', async () => {
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'zs-'));
+    const zip = new JSZip();
+    for (let i = 0; i < 1500; i++) {
+      const f = path.join(dir, `e${i}.bin`);
+      await fs.promises.writeFile(f, Buffer.alloc(64, i % 256));
+      zipSetStream(zip, `e${i}.bin`, f);
+    }
+    const out = path.join(dir, 'many.zip');
+    await expect(zipSaveToFile(zip, out, 1)).resolves.toBeGreaterThan(0);
+
+    const reloaded = await JSZip.loadAsync(await fs.promises.readFile(out));
+    expect(Object.keys(reloaded.files)).toHaveLength(1500);
+
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  }, 60000);
 });

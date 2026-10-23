@@ -1,5 +1,7 @@
 import { createReadStream, createWriteStream, promises as fsp } from 'fs';
 import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
+import { stat } from 'fs/promises';
 import { randomBytes } from 'crypto';
 import os from 'os';
 import path from 'path';
@@ -187,4 +189,36 @@ export const zipSetStream = (
   filePath: string
 ) => {
   zip.file(filename, lazyFileStream(filePath), { binary: true });
+};
+
+/**
+ * Stream the zip straight to disk, so the whole archive never exists in memory.
+ *
+ * `streamFiles: false` is deliberate. JSZip pipes the compress worker into
+ * ZipFileWorker, so its per-entry accumulation holds POST-compression bytes --
+ * one deflated entry at a time, which is small. Setting it to true would emit
+ * ZIP data descriptors (GP bit 3), which some OOXML consumers handle poorly.
+ */
+export const zipSaveToFile = async (
+  zip: JSZip,
+  outputPath: string,
+  compressionLevel: number
+): Promise<number> => {
+  try {
+    await pipeline(
+      zip.generateNodeStream({
+        type: 'nodebuffer',
+        compression: 'DEFLATE',
+        compressionOptions: { level: compressionLevel },
+        streamFiles: false,
+      }),
+      createWriteStream(outputPath)
+    );
+  } catch (e) {
+    throw new ReportOutputError(
+      `Could not write the report to ${outputPath}`,
+      e
+    );
+  }
+  return (await stat(outputPath)).size;
 };
