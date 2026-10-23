@@ -2,12 +2,14 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import JSZip from 'jszip';
 import {
   lazyFileStream,
   makeRunDir,
   cleanupRunDir,
   writeXml,
   storeImage,
+  zipSetStream,
 } from '../diskSinks';
 import { buildXml, parseXml } from '../xml';
 import { Image, SpooledImage } from '../types';
@@ -231,5 +233,26 @@ describe('storeImage', () => {
     })) as SpooledImage;
     expect(a.file).not.toBe(b.file);
     await fs.promises.rm(root, { recursive: true, force: true });
+  });
+});
+
+describe('zipSetStream', () => {
+  it('adds a zip entry whose content is read lazily from the given file', async () => {
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'zss-'));
+    const file = path.join(dir, 'img.bin');
+    const bytes = Buffer.from([5, 6, 7, 8]);
+    await fs.promises.writeFile(file, bytes);
+
+    const zip = new JSZip();
+    zipSetStream(zip, 'media/img.bin', file);
+    const generated = await zip.generateAsync({ type: 'nodebuffer' });
+
+    const reloaded = await JSZip.loadAsync(generated);
+    const entry = reloaded.file('media/img.bin');
+    expect(entry).not.toBeNull();
+    const content = await entry!.async('nodebuffer');
+    expect(content).toEqual(bytes);
+
+    await fs.promises.rm(dir, { recursive: true, force: true });
   });
 });

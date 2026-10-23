@@ -1,5 +1,4 @@
 import JSZip from 'jszip';
-import { lazyFileStream } from './diskSinks';
 
 const zipLoad = (inputFile: ArrayBuffer) => JSZip.loadAsync(inputFile);
 const zipGetText = (zip: JSZip, filename: string) => {
@@ -18,17 +17,7 @@ const zipSave = (zip: JSZip, compressionLevel: number) =>
     compressionOptions: { level: compressionLevel },
   });
 
-/**
- * Add an entry whose content is read lazily from disk at generate time.
- *
- * `binary: true` is required: the spooled file already holds encoded bytes, so
- * JSZip must treat it as pre-encoded rather than re-encoding it.
- */
-const zipSetStream = (zip: JSZip, filename: string, filePath: string) => {
-  zip.file(filename, lazyFileStream(filePath), { binary: true });
-};
-
 // ==========================================
 // Public API
 // ==========================================
-export { zipLoad, zipGetText, zipSetText, zipSave, zipSetStream };
+export { zipLoad, zipGetText, zipSetText, zipSave };

@@ -20,6 +20,7 @@ import {
   Links,
   Htmls,
   Image,
+  SpooledImage,
   BUILT_IN_COMMANDS,
   ImageExtensions,
   NonTextNode,
@@ -37,11 +38,33 @@ import {
   UnterminatedForLoopError,
 } from './errors';
 import { logger } from './debug';
-import { storeImage } from './diskSinks';
 import pLimit from 'p-limit';
 
 // Default concurrency limit for parallel image downloads
 const DEFAULT_IMAGE_CONCURRENCY = 10;
+
+/**
+ * Spool one image's bytes via ctx's disk module, or pass it through unchanged
+ * when disk-backed mode is off (ctx.runDir is undefined).
+ *
+ * This indirects through `ctx.disk` (a `typeof import('./diskSinks')` type,
+ * erased at compile time) instead of statically importing `storeImage` from
+ * `./diskSinks`, because this module is on the browser import chain and
+ * diskSinks.ts pulls in fs/path/crypto/os.
+ */
+async function storeImageViaCtx(
+  ctx: Context,
+  id: string,
+  img: Image
+): Promise<Image | SpooledImage> {
+  if (ctx.runDir == null) return img;
+  if (ctx.disk == null) {
+    throw new InternalError(
+      'Disk-backed mode enabled (ctx.runDir is set) without a disk module'
+    );
+  }
+  return ctx.disk.storeImage(ctx.runDir, id, img);
+}
 
 export function newContext(
   options: CreateReportOptions,
@@ -1113,7 +1136,7 @@ const imageToContext = async (ctx: Context, img: Image) => {
   ctx.imageAndShapeIdIncrement += 1;
   const id = String(ctx.imageAndShapeIdIncrement);
   const relId = `img${id}`;
-  ctx.images[relId] = await storeImage(ctx.runDir, relId, img);
+  ctx.images[relId] = await storeImageViaCtx(ctx, relId, img);
   return relId;
 };
 
@@ -1300,7 +1323,7 @@ const applyImageData = async (
     };
 
     // Store the SVG with its original ID
-    ctx.images[pending.id] = await storeImage(ctx.runDir, pending.id, imgData);
+    ctx.images[pending.id] = await storeImageViaCtx(ctx, pending.id, imgData);
 
     // Create a new ID for the thumbnail
     const thumbRelId = await imageToContext(ctx, thumbnail);
@@ -1328,7 +1351,7 @@ const applyImageData = async (
     }
   } else {
     // Non-SVG image - just store the data
-    ctx.images[pending.id] = await storeImage(ctx.runDir, pending.id, imgData);
+    ctx.images[pending.id] = await storeImageViaCtx(ctx, pending.id, imgData);
   }
 };
 

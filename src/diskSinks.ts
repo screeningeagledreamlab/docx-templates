@@ -4,6 +4,7 @@ import { randomBytes } from 'crypto';
 import os from 'os';
 import path from 'path';
 import { once } from 'events';
+import JSZip from 'jszip';
 import { Node, Image, SpooledImage } from './types';
 import { emitXml, XmlOptions } from './xml';
 import { ReportOutputError } from './errors';
@@ -169,3 +170,21 @@ export async function storeImage(
   }
   return { extension: img.extension, file };
 }
+
+/**
+ * Add a zip entry whose content is read lazily from disk at generate time.
+ *
+ * Lives here rather than in zip.ts because zip.ts is on the browser import
+ * chain: a static import of this module from there drags fs/path/crypto/os
+ * into the browser bundle.
+ *
+ * `binary: true` is required — the spooled file already holds encoded bytes,
+ * so JSZip must treat it as pre-encoded rather than re-encoding it.
+ */
+export const zipSetStream = (
+  zip: JSZip,
+  filename: string,
+  filePath: string
+) => {
+  zip.file(filename, lazyFileStream(filePath), { binary: true });
+};

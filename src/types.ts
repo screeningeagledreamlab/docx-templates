@@ -250,6 +250,14 @@ export type Context = {
   images: Images;
   /** Scratch dir for disk-backed mode; undefined means keep image bytes in memory. */
   runDir?: string;
+  /**
+   * Handle to the Node-only disk module, set only when disk-backed mode is
+   * enabled (Task 6). Kept as a `typeof import(...)` type (erased at compile
+   * time, no runtime import) rather than a static import, because this module
+   * (types.ts, via processTemplate.ts) is on the browser import chain and
+   * diskSinks.ts pulls in fs/path/crypto/os.
+   */
+  disk?: typeof import('./diskSinks');
   pendingLinkNode?: NonTextNode;
   linkId: number;
   links: Links;

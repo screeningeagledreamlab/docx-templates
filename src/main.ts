@@ -1,4 +1,4 @@
-import { zipLoad, zipGetText, zipSetText, zipSave, zipSetStream } from './zip';
+import { zipLoad, zipGetText, zipSetText, zipSave } from './zip';
 import { parseXml, buildXml } from './xml';
 import preprocessTemplate from './preprocessTemplate';
 import {
@@ -24,7 +24,7 @@ import {
 } from './types';
 import { addChild, newNonTextNode } from './reportUtils';
 import JSZip from 'jszip';
-import { TemplateParseError } from './errors';
+import { TemplateParseError, InternalError } from './errors';
 import { logger } from './debug';
 
 const DEFAULT_CMD_DELIMITER = '+++' as const;
@@ -516,7 +516,8 @@ const processImages = async (
   images: Images,
   documentComponent: string,
   zip: JSZip,
-  indentXml: boolean
+  indentXml: boolean,
+  disk?: typeof import('./diskSinks')
 ) => {
   logger.debug(`Processing images for ${documentComponent}...`);
   const imageIds = Object.keys(images);
@@ -531,7 +532,14 @@ const processImages = async (
     logger.debug(`Writing image ${imageId} (${imgName})...`);
     const imgPath = `${TEMPLATE_PATH}/media/${imgName}`;
     if ('file' in img) {
-      zipSetStream(zip, imgPath, img.file);
+      // Spooled image: only reachable in disk-backed mode, where the caller
+      // passes the dynamically-imported disk module (wired up in Task 6).
+      if (disk == null) {
+        throw new InternalError(
+          'Spooled image encountered without a disk module'
+        );
+      }
+      disk.zipSetStream(zip, imgPath, img.file);
     } else if (typeof img.data === 'string') {
       zip.file(imgPath, img.data, { base64: true });
     } else {
